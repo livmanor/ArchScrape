@@ -478,7 +478,7 @@ with st.sidebar:
     st.markdown("---")
     nav = st.radio(
         "Navigation",
-        ["🎯 Competitor Analyser", "📊 Dashboard", "🔍 Saved Companies", "🔬 Evidence", "⚙️ Bulk Scrape"],
+        ["💼 Leads", "🎯 Competitor Analyser", "📊 Dashboard", "🔍 Saved Companies", "🔬 Evidence", "⚙️ Bulk Scrape"],
         label_visibility="collapsed",
     )
 
@@ -520,17 +520,183 @@ st.markdown("""
 <div class="arch-header">
     <h1>🏛️ ArchScale Intelligence</h1>
     <div class="subtitle">
-        CEO-facing competitor intelligence for Indian architecture & interior design firms —
-        enter any company's website to instantly analyse their services, portfolio, social presence, and contact details.
+        CEO-facing intelligence platform for Indian architecture & interior design firms —
+        discover qualified executive leads with verified contacts, owner/founder titles, organisation sizes, and social footprints.
     </div>
 </div>
 """, unsafe_allow_html=True)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# PAGE: Competitor Analyser (PRIMARY)
+# PAGE: Leads (CEO LEADS TOOL)
 # ═══════════════════════════════════════════════════════════════════════════════
-if nav == "🎯 Competitor Analyser":
+if nav == "💼 Leads":
+    st.markdown('<div class="input-card">', unsafe_allow_html=True)
+    st.markdown('<div class="input-card-title">💼 Executive Leads Directory</div>', unsafe_allow_html=True)
+    st.markdown(
+        "<div style='font-size:0.85rem;color:#94a3b8;margin-bottom:16px'>"
+        "Single executive table of discovered firms with verified business contacts, senior leadership, and public social footprints. "
+        "Strict traceability with zero fabricated data."
+        "</div>", unsafe_allow_html=True,
+    )
+
+    all_leads = get_leads(DB_PATH)
+
+    # ── Completeness Summary ─────────────────────────────────────────────────
+    total_leads = len(all_leads)
+    if total_leads > 0:
+        email_cnt = sum(1 for l in all_leads if l["email"] != "Not found")
+        mobile_cnt = sum(1 for l in all_leads if l["mobile"] != "Not found")
+        owner_cnt = sum(1 for l in all_leads if l["owner_name"] != "Not found")
+        city_cnt = sum(1 for l in all_leads if l["city"] != "Not found")
+        size_cnt = sum(1 for l in all_leads if l["org_size"] != "Not found")
+
+        st.markdown(f"""
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px">
+            <div class="metric-pill">📋 Total Leads: <strong>{total_leads}</strong></div>
+            <div class="metric-pill">✉️ Email: <strong>{email_cnt}/{total_leads}</strong> ({int(email_cnt/total_leads*100)}%)</div>
+            <div class="metric-pill">📞 Mobile: <strong>{mobile_cnt}/{total_leads}</strong> ({int(mobile_cnt/total_leads*100)}%)</div>
+            <div class="metric-pill">👤 Owner: <strong>{owner_cnt}/{total_leads}</strong> ({int(owner_cnt/total_leads*100)}%)</div>
+            <div class="metric-pill">📍 City: <strong>{city_cnt}/{total_leads}</strong> ({int(city_cnt/total_leads*100)}%)</div>
+            <div class="metric-pill">👥 Org Size: <strong>{size_cnt}/{total_leads}</strong> ({int(size_cnt/total_leads*100)}%)</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # ── Filter & Export Bar ──────────────────────────────────────────────────
+    f_col1, f_col2, f_col3, f_col4, f_col5 = st.columns([2.4, 1.4, 1.4, 1, 1])
+    with f_col1:
+        leads_kw = st.text_input("🔍 Search Leads", placeholder="Search owner, firm, designation, city...", key="leads_search_kw")
+    with f_col2:
+        cities = ["All"] + sorted(list({l["city"] for l in all_leads if l["city"] != "Not found"}))
+        sel_city = st.selectbox("📍 City Filter", cities, key="leads_city_sel")
+    with f_col3:
+        sizes = ["All", "1-10", "11-50", "51-200", "200+", "Not found"]
+        sel_size = st.selectbox("👥 Org Size Filter", sizes, key="leads_size_sel")
+
+    # Filtered dataset
+    filtered_leads = get_leads(
+        DB_PATH,
+        search=leads_kw,
+        city="" if sel_city == "All" else sel_city,
+        org_size="" if sel_size == "All" else sel_size,
+    )
+
+    with f_col4:
+        st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+        csv_data = export_leads_csv(filtered_leads)
+        st.download_button(
+            "⬇️ Export CSV",
+            data=csv_data,
+            file_name=f"archscale_leads_{datetime.date.today()}.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+    with f_col5:
+        st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+        excel_data = export_leads_excel(filtered_leads)
+        st.download_button(
+            "⬇️ Export Excel",
+            data=excel_data,
+            file_name=f"archscale_leads_{datetime.date.today()}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # ── Leads Directory Table ────────────────────────────────────────────────
+    if not filtered_leads:
+        st.info("No leads found matching the filters. Enter competitor URLs in 'Competitor Analyser' or run a 'Bulk Scrape' to discover companies.")
+    else:
+        st.markdown(f"<div style='font-size:0.85rem;color:#64748b;margin:12px 0 16px'>Showing <strong>{len(filtered_leads)}</strong> lead record(s):</div>", unsafe_allow_html=True)
+
+        for l in filtered_leads:
+            owner_val   = l.get("owner_name", "Not found")
+            org_val     = l.get("organisation", "")
+            desig_val   = l.get("designation", "Not found")
+            size_val    = l.get("org_size", "Not found")
+            size_basis  = l.get("org_size_basis", "not_found")
+            mobile_val  = l.get("mobile", "Not found")
+            email_val   = l.get("email", "Not found")
+            city_val    = l.get("city", "Not found")
+            city_stat   = l.get("city_status", "Not found")
+            source_list = l.get("source_urls_list", [])
+            socials     = l.get("social_links", {})
+
+            # Owner badge & formatting
+            if owner_val != "Not found":
+                owner_html = f"<div style='font-weight:600;color:#f1f5f9;font-size:0.95rem'>{owner_val} <span class='badge-review'>⚠️ needs review</span></div>"
+                if desig_val != "Not found":
+                    owner_html += f"<div style='font-size:0.8rem;color:#94a3b8;margin-top:2px'>💼 {desig_val}</div>"
+            else:
+                owner_html = "<span class='badge-notfound'>Not found</span>"
+
+            # Mobile badge & formatting
+            if mobile_val != "Not found":
+                m_links = " ".join([f"<a href='tel:{p.strip()}' style='color:#38bdf8;text-decoration:none;margin-right:6px'>📞 {p.strip()}</a>" for p in mobile_val.split(",")])
+                mobile_html = f"{m_links} <span class='badge-extracted'>✅ extracted</span>"
+            else:
+                mobile_html = "<span class='badge-notfound'>Not found</span>"
+
+            # Email badge & formatting
+            if email_val != "Not found":
+                e_links = " ".join([f"<a href='mailto:{em.strip()}' style='color:#818cf8;text-decoration:none;margin-right:6px'>✉️ {em.strip()}</a>" for em in email_val.split(",")])
+                email_html = f"{e_links} <span class='badge-extracted'>✅ extracted</span>"
+            else:
+                email_html = "<span class='badge-notfound'>Not found</span>"
+
+            # City badge & formatting
+            if city_val != "Not found":
+                if city_stat == "Needs review" or "inferred" in city_stat.lower():
+                    city_html = f"📍 {city_val} <span class='badge-review'>⚠️ inferred</span>"
+                else:
+                    city_html = f"📍 {city_val} <span class='badge-extracted'>✅ extracted</span>"
+            else:
+                city_html = "<span class='badge-notfound'>Not found</span>"
+
+            # Org size
+            if size_val != "Not found":
+                size_html = f"👥 <strong>{size_val}</strong> <span class='badge-basis'>{size_basis}</span>"
+            else:
+                size_html = "<span class='badge-notfound'>Not found</span>"
+
+            # Source URLs (clickable)
+            src_links = " ".join([f"<a href='{u}' target='_blank' style='color:#a5b4fc;text-decoration:none;font-size:0.75rem;margin-right:6px;background:rgba(99,102,241,0.1);padding:3px 8px;border-radius:6px;border:1px solid rgba(99,102,241,0.2)'>🌐 {normalise_domain(u)} ↗</a>" for u in source_list[:3]])
+
+            # Social channels (clickable icons)
+            if socials:
+                soc_links = " ".join([f"<a href='{u}' target='_blank' style='text-decoration:none;margin-right:8px;font-size:0.95rem' title='{plat.title()}'>{_social_icon(plat)}</a>" for plat, u in socials.items()])
+            else:
+                soc_links = "<span class='badge-notfound'>None</span>"
+
+            st.markdown(f"""
+            <div class="lead-card">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px">
+                    <div style="flex:1.2;min-width:230px">
+                        <div style="font-size:1.1rem;font-weight:700;color:#e2e8f0">{org_val}</div>
+                        <div style="margin-top:6px">{owner_html}</div>
+                    </div>
+                    <div style="flex:1.4;min-width:270px;display:flex;flex-direction:column;gap:5px">
+                        <div>{email_html}</div>
+                        <div>{mobile_html}</div>
+                    </div>
+                    <div style="flex:1;min-width:180px;display:flex;flex-direction:column;gap:5px">
+                        <div>{city_html}</div>
+                        <div>{size_html}</div>
+                    </div>
+                    <div style="flex:1.2;min-width:180px;text-align:right">
+                        <div style="margin-bottom:6px">{soc_links}</div>
+                        <div>{src_links}</div>
+                    </div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PAGE: Competitor Analyser
+# ═══════════════════════════════════════════════════════════════════════════════
+elif nav == "🎯 Competitor Analyser":
 
     # ── Input Panel ──────────────────────────────────────────────────────────
     st.markdown('<div class="input-card">', unsafe_allow_html=True)
