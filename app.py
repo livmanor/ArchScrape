@@ -335,6 +335,10 @@ def _scrape_single_url(url: str, category: str = "architecture") -> dict:
         "ok": False,
         "error": None,
         "org_name": None,
+        "owner_name": None,
+        "designation": None,
+        "org_size": None,
+        "org_size_basis": None,
         "city": None,
         "phone": [],
         "email": [],
@@ -378,6 +382,14 @@ def _scrape_single_url(url: str, category: str = "architecture") -> dict:
             continue
         if fn == "org_name" and not intel["org_name"]:
             intel["org_name"] = val
+        elif fn == "owner_name" and not intel["owner_name"]:
+            intel["owner_name"] = val
+        elif fn == "designation" and not intel["designation"]:
+            intel["designation"] = val
+        elif fn == "org_size" and not intel["org_size"]:
+            intel["org_size"] = val
+        elif fn == "org_size_basis" and not intel["org_size_basis"]:
+            intel["org_size_basis"] = val
         elif fn == "city" and not intel["city"]:
             intel["city"] = val
         elif fn == "description" and not intel["description"]:
@@ -416,14 +428,19 @@ def _save_intel_to_db(intel: dict) -> None:
         )
         field_map = {
             "org_name": intel.get("org_name"),
+            "owner_name": intel.get("owner_name"),
+            "designation": intel.get("designation"),
+            "org_size": intel.get("org_size"),
+            "org_size_basis": intel.get("org_size_basis"),
             "city": intel.get("city"),
             "website": intel.get("website"),
             "description": intel.get("description"),
         }
         for field, val in field_map.items():
             if val:
+                status = "Needs review" if field in ("owner_name", "designation") else ("Extracted" if val != "Not found" else "Not found")
                 db.upsert_evidence(conn, company_id, field, val, intel["url"],
-                                   None, "structured", now)
+                                   None, "structured", now, verification_status=status)
         for ph in intel.get("phone", []):
             db.upsert_evidence(conn, company_id, "phone", ph, intel["url"],
                                None, "html_content", now)
