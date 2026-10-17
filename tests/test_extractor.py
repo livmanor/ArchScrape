@@ -394,3 +394,44 @@ class TestBusinessEmailExtraction:
         candidates = extract(html_junk, "https://firm.example/contact", page_role="contact")
         emails = [c.value for c in candidates if c.field_name == "email"]
         assert not any(e.endswith(".png") or e.endswith(".svg") for e in emails)
+
+
+class TestVendorAndNonPersonExclusion:
+    def test_rejects_material_and_supplier_names(self):
+        """'Marble Suppliers' or 'Tile Manufacturers' must never be accepted as owner names."""
+        from scraper.extractor import _clean_name
+        assert _clean_name("Marble Suppliers") is None
+        assert _clean_name("Tile Manufacturers") is None
+        assert _clean_name("Lighting Consultants") is None
+        assert _clean_name("Granite Enterprises") is None
+        assert _clean_name("Timber Works") is None
+        # Real architect names must still be accepted
+        assert _clean_name("Arpan Shah") == "Arpan Shah"
+        assert _clean_name("Bimal Patel") == "Bimal Patel"
+        assert _clean_name("Sonali Rastogi") == "Sonali Rastogi"
+
+    def test_ignores_team_cards_in_vendor_sections(self):
+        """Cards nested inside vendor or credit sections must not be extracted as team/owners."""
+        html_credits = """
+        <html>
+        <body>
+            <section class="project-credits vendors">
+                <div class="team-member">
+                    <h3>Marble Suppliers</h3>
+                    <p class="role">Partner</p>
+                </div>
+            </section>
+            <section class="leadership team">
+                <div class="member">
+                    <h3>Kavita Rao</h3>
+                    <p class="role">Founder & Principal Architect</p>
+                </div>
+            </section>
+        </body>
+        </html>
+        """
+        candidates = extract(html_credits, "https://firm.example/about", page_role="about")
+        owners = [c.value for c in candidates if c.field_name == "owner_name"]
+        assert "Marble Suppliers" not in owners
+        assert "Kavita Rao" in owners
+

@@ -43,8 +43,9 @@ BROWSER_HEADERS = {
 def _check_known_csvs(query_norm: str) -> Optional[dict]:
     """Check known seed and firm CSV files for an exact or substring match."""
     csv_paths = [
-        DATA_DIR / "seed_urls.csv",
+        DATA_DIR / "chennai_architecture_firms.csv",
         DATA_DIR / "ahmedabad_architecture_firms.csv",
+        DATA_DIR / "seed_urls.csv",
     ]
     for p in csv_paths:
         if not p.exists():
@@ -71,6 +72,50 @@ def _check_known_csvs(query_norm: str) -> Optional[dict]:
         except Exception as exc:
             logger.debug("Error reading seed CSV %s: %s", p, exc)
     return None
+
+
+def get_city_seed_companies(city: str, limit: int = 50) -> list[dict]:
+    """Retrieve up to limit verified company records for a given city."""
+    city_norm = city.strip().lower()
+    results: list[dict] = []
+    seen_urls: set[str] = set()
+
+    # Look for specific city CSV first
+    city_csv = DATA_DIR / f"{city_norm}_architecture_firms.csv"
+    csv_paths = [city_csv] if city_csv.exists() else []
+    csv_paths.extend([
+        DATA_DIR / "chennai_architecture_firms.csv",
+        DATA_DIR / "ahmedabad_architecture_firms.csv",
+        DATA_DIR / "seed_urls.csv",
+    ])
+
+    for p in csv_paths:
+        if not p.exists():
+            continue
+        try:
+            with open(p, encoding="utf-8-sig") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    url = (row.get("url") or "").strip()
+                    notes = (row.get("notes") or "").strip()
+                    cat = (row.get("category") or "architecture").strip()
+                    if not url or url in seen_urls:
+                        continue
+
+                    # If looking for a specific city, filter unless from city-specific file
+                    if p.name.startswith(city_norm):
+                        seen_urls.add(url)
+                        results.append({"url": url, "category": cat, "notes": notes, "city": city.title()})
+                    elif city_norm in notes.lower():
+                        seen_urls.add(url)
+                        results.append({"url": url, "category": cat, "notes": notes, "city": city.title()})
+
+                    if len(results) >= limit:
+                        return results
+        except Exception as exc:
+            logger.debug("Error reading %s: %s", p, exc)
+
+    return results[:limit]
 
 
 def _check_db(conn, query_norm: str) -> Optional[dict]:

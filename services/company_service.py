@@ -15,7 +15,7 @@ from scraper.discovery import DiscoveryEngine, SeedCSVSource
 from scraper.extractor import extract, classify_page_role
 from scraper.fetcher import fetch, discover_internal_pages, get_session
 from scraper.validator import normalise_domain, URLValidationError
-from scraper.finder import resolve_company_url
+from scraper.finder import resolve_company_url, get_city_seed_companies
 
 logger = logging.getLogger(__name__)
 
@@ -568,4 +568,60 @@ def find_and_extract_company_lead(
     }
 
     return lead_dict
+
+
+def find_and_extract_city_leads(
+    city: str,
+    limit: int = 50,
+    db_path: pathlib.Path | None = None,
+    progress_callback: Optional[Callable[[str], None]] = None,
+) -> list[dict]:
+    """
+    Discover and extract qualified executive leads for the top companies in a given city (e.g. Chennai).
+    Crawls each company website live, parses leads, records source provenance, and persists to SQLite.
+    """
+    def log(msg: str) -> None:
+        logger.info(msg)
+        if progress_callback:
+            progress_callback(msg)
+
+    city_title = city.strip().title()
+    log(f"🔍 Loading top verified architecture & interior firms in {city_title}...")
+    firms = get_city_seed_companies(city, limit=limit)
+    if not firms:
+        log(f"⚠️ No local seed directory found for {city_title}. Attempting dynamic resolution...")
+        from scraper.finder import resolve_company_url
+        res = resolve_company_url(f"top architecture firms in {city}")
+        if res.get("url"):
+            firms = [{"url": res["url"], "category": "architecture", "notes": f"Firm in {city_title}", "city": city_title}]
+
+    log(f"📍 Found {len(firms)} qualified target firms for {city_title}. Beginning live crawl & lead extraction...")
+    results = []
+
+    for i, firm in enumerate(firms, 1):
+        target = firm.get("notes") or firm.get("url")
+        url = firm.get("url")
+        log(f"🚀 [{i}/{len(firms)}] Crawling & extracting: {target}...")
+        try:
+            lead = find_and_extract_company_lead(
+                target_input=url,
+                db_path=db_path,
+                category=firm.get("category", "architecture"),
+                market_city=city_title,
+                progress_callback=None,
+            )
+            if lead.get("ok"):
+                # Clean up display organisation name if it reverted to domain
+                if (not lead.get("organisation") or lead.get("organisation") == lead.get("domain")) and firm.get("notes"):
+                    lead["organisation"] = firm["notes"].split(" - ")[0]
+                results.append(lead)
+                log(f"✅ [{i}/{len(firms)}] {lead.get('organisation')} → Owner: {lead.get('owner_name')} | Email: {lead.get('email')}")
+            else:
+                log(f"⚠️ [{i}/{len(firms)}] Skipped {target}: {lead.get('error')}")
+        except Exception as exc:
+            log(f"❌ [{i}/{len(firms)}] Error processing {target}: {exc}")
+
+    log(f"🏁 Finished discovery! Successfully extracted verified leads for {len(results)}/{len(firms)} companies in {city_title}.")
+    return results
+
 

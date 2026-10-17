@@ -8,6 +8,7 @@ enforced at the database level (UNIQUE constraints) and at the service level.
 import sqlite3
 import pathlib
 import logging
+import datetime
 from contextlib import contextmanager
 from typing import Any, Generator
 
@@ -533,3 +534,41 @@ def get_leads_data(
         leads.append(lead)
 
     return leads
+
+
+def update_lead_fields(
+    conn: sqlite3.Connection,
+    company_id: int,
+    owner_name: str | None = None,
+    designation: str | None = None,
+    email: str | None = None,
+    mobile: str | None = None,
+    city: str | None = None,
+    org_size: str | None = None,
+) -> None:
+    """Manually update or correct lead fields in the companies table and record user-verified evidence."""
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    conn.execute(
+        """
+        UPDATE companies
+        SET owner_name = COALESCE(?, owner_name),
+            designation = COALESCE(?, designation),
+            city = COALESCE(?, city),
+            org_size = COALESCE(?, org_size),
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (owner_name, designation, city, org_size, now, company_id),
+    )
+    if owner_name:
+        upsert_evidence(conn, company_id, "owner_name", owner_name, "user_override", "Manually verified by user", "user_verified", now, "Verified", 1)
+    if designation:
+        upsert_evidence(conn, company_id, "designation", designation, "user_override", "Manually verified by user", "user_verified", now, "Verified", 1)
+    if email:
+        upsert_evidence(conn, company_id, "email", email, "user_override", "Manually verified by user", "user_verified", now, "Verified", 1)
+    if mobile:
+        upsert_evidence(conn, company_id, "phone", mobile, "user_override", "Manually verified by user", "user_verified", now, "Verified", 1)
+    if city:
+        upsert_evidence(conn, company_id, "city", city, "user_override", "Manually verified by user", "user_verified", now, "Verified", 1)
+    conn.commit()
+
