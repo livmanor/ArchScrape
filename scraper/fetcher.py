@@ -274,7 +274,10 @@ def discover_internal_pages(
     from bs4 import BeautifulSoup  # imported here to avoid circular at module level
 
     if keywords is None:
-        keywords = ["about", "team", "leadership", "founders", "contact", "studio", "people", "us"]
+        keywords = [
+            "about", "team", "leadership", "founders", "contact", "studio",
+            "people", "us", "services", "work", "projects", "portfolio", "news"
+        ]
 
     parsed_base = urllib.parse.urlparse(base_url)
     base_origin = f"{parsed_base.scheme}://{parsed_base.netloc}"

@@ -221,6 +221,8 @@ for k, v in {
     "intel_running": False,
     "scrape_log": [],
     "active_intel_idx": None,
+    "intel_urls_input": "",
+    "intel_city": "Ahmedabad",
 }.items():
     if k not in st.session_state:
         st.session_state[k] = v
@@ -459,6 +461,31 @@ if nav == "🎯 Competitor Analyser":
     st.markdown('<div class="input-card">', unsafe_allow_html=True)
     st.markdown('<div class="input-card-title">🎯 Analyse a Competitor</div>', unsafe_allow_html=True)
 
+    # 1-click presets
+    st.markdown("<div style='font-size:0.8rem;color:#94a3b8;margin-bottom:8px'>⚡ <strong>Quick Presets:</strong> Click to load competitor websites:</div>", unsafe_allow_html=True)
+    p_col1, p_col2, p_col3, p_col4 = st.columns([1, 1, 1, 1])
+    with p_col1:
+        if st.button("📍 Ahmedabad Firms", use_container_width=True, help="Load Ahmedabad firms (HCP, INI Design Studio)"):
+            st.session_state["intel_urls_input"] = "https://www.hcp.co.in\nhttps://www.inidesignstudio.com"
+            st.session_state["intel_city"] = "Ahmedabad"
+            st.rerun()
+    with p_col2:
+        if st.button("📍 Mumbai Firms", use_container_width=True, help="Load Mumbai firms (Edifice, Sanjay Puri)"):
+            st.session_state["intel_urls_input"] = "https://www.edifice.co.in\nhttps://www.sanjaypuriarchitects.com"
+            st.session_state["intel_city"] = "Mumbai"
+            st.rerun()
+    with p_col3:
+        if st.button("📍 Delhi NCR Firms", use_container_width=True, help="Load Delhi firms (Morphogenesis, Studio Lotus)"):
+            st.session_state["intel_urls_input"] = "https://www.morphogenesis.org\nhttps://studiolotus.in"
+            st.session_state["intel_city"] = "Delhi"
+            st.rerun()
+    with p_col4:
+        if st.button("📍 Interior Studio", use_container_width=True, help="Load Interior Design firms"):
+            st.session_state["intel_urls_input"] = "https://www.thecrossboundaries.com\nhttps://www.studiolagom.in"
+            st.session_state["intel_city"] = "Ahmedabad"
+            st.rerun()
+
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
     col_url, col_city, col_cat = st.columns([3, 1.5, 1.5])
     with col_url:
         raw_urls = st.text_area(
