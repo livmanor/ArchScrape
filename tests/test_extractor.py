@@ -354,8 +354,8 @@ class TestOrgSizeExtraction:
 
 
 class TestCityExtractionLeads:
-    def test_city_fallback_inferred_from_market_filter(self):
-        """When no city is present in HTML/JSON-LD, falls back to market_city labelled 'inferred' and 'Needs review'."""
+    def test_city_not_inferred_from_market_filter(self):
+        """When no city is present in HTML/JSON-LD, outputs 'Not found' without inferring from market_city."""
         candidates = extract(
             FIXTURE_NO_SIZE_OR_TEAM,
             "https://firm.example/",
@@ -363,10 +363,9 @@ class TestCityExtractionLeads:
             market_city="Ahmedabad",
         )
         cities = [c for c in candidates if c.field_name == "city"]
-        assert cities, "Should have inferred city candidate"
-        assert cities[0].value == "Ahmedabad"
-        assert cities[0].method == "inferred"
-        assert cities[0].verification_status == "Needs review"
+        assert cities, "Should have city candidate"
+        assert cities[0].value == "Not found"
+        assert cities[0].verification_status == "Not found"
 
     def test_real_city_takes_precedence_over_market_city(self):
         """If city is found in page text (e.g. Pune), it takes precedence over market_city filter."""
@@ -434,4 +433,54 @@ class TestVendorAndNonPersonExclusion:
         owners = [c.value for c in candidates if c.field_name == "owner_name"]
         assert "Marble Suppliers" not in owners
         assert "Kavita Rao" in owners
+
+
+class TestGenericHeadingsAndSocialFiltering:
+    def test_rejects_social_homepages(self):
+        """Social links pointing to root platform homepages must be rejected."""
+        html = """
+        <html><body>
+            <a href="https://in.pinterest.com/">Pinterest</a>
+            <a href="https://www.facebook.com/">Facebook</a>
+            <a href="https://instagram.com/studio.lotus/">Instagram</a>
+        </body></html>
+        """
+        candidates = extract(html, "https://firm.example/")
+        socials = [c.value for c in candidates if c.field_name in ("pinterest", "facebook", "instagram")]
+        assert "https://in.pinterest.com/" not in socials
+        assert "https://www.facebook.com/" not in socials
+        assert "https://instagram.com/studio.lotus/" in socials
+
+    def test_generic_headings_filtered_falls_back_to_title(self):
+        """Generic headings like 'About Us' must be skipped and fall back to title brand."""
+        html = """
+        <html>
+        <head><title>Modo Designs - Architect Arpan Shah | Architecture</title></head>
+        <body>
+            <h1>About Us</h1>
+            <p>Welcome to our studio practice.</p>
+        </body>
+        </html>
+        """
+        candidates = extract(html, "https://mododesigns.co.in/about-us", page_role="about")
+        org_names = [c.value for c in candidates if c.field_name == "org_name"]
+        assert "About Us" not in org_names
+        assert "Modo Designs" in org_names
+
+    def test_no_designation_without_person_name(self):
+        """Designation must not be extracted if no person name was found in the text."""
+        html = """
+        <html>
+        <head><title>Firm Studio</title></head>
+        <body>
+            <h1>Projects</h1>
+            <p>We work as an architect and interior designer firm in Ahmedabad.</p>
+        </body>
+        </html>
+        """
+        candidates = extract(html, "https://firm.example/projects", page_role="about")
+        owners = [c.value for c in candidates if c.field_name == "owner_name"]
+        desigs = [c.value for c in candidates if c.field_name == "designation"]
+        assert not owners
+        assert not desigs
 

@@ -122,6 +122,30 @@ def _extract_emails(text: str) -> list[str]:
     ))
 
 
+def _is_valid_social_profile(url: str, platform_domain: str) -> bool:
+    """Return True only if url points to a real profile/page, not a platform homepage or utility."""
+    try:
+        parsed = urllib.parse.urlparse(url.strip())
+        if parsed.scheme.lower() not in ("http", "https"):
+            return False
+        domain = parsed.netloc.lower().lstrip("www.")
+        if platform_domain not in domain:
+            return False
+        path = parsed.path.strip("/")
+        if not path:
+            return False  # Platform homepage like https://in.pinterest.com/ or https://facebook.com/
+        first_segment = path.split("/")[0].lower()
+        if first_segment in (
+            "home", "feed", "login", "signup", "share", "sharer", "sharer.php",
+            "intent", "pin", "help", "about", "terms", "privacy", "explore",
+            "search", "settings", "notifications", "messages"
+        ):
+            return False
+        return len(path) >= 2
+    except Exception:
+        return False
+
+
 def _extract_social_links(soup: BeautifulSoup, source_url: str) -> list[Candidate]:
     results: list[Candidate] = []
     seen: set[str] = set()
@@ -130,7 +154,7 @@ def _extract_social_links(soup: BeautifulSoup, source_url: str) -> list[Candidat
         parsed = urllib.parse.urlparse(href)
         domain = parsed.netloc.lower().lstrip("www.")
         for sd, field in _SOCIAL_DOMAINS.items():
-            if sd in domain and href not in seen:
+            if sd in domain and href not in seen and _is_valid_social_profile(href, sd):
                 seen.add(href)
                 results.append(Candidate(
                     field_name=field,
@@ -213,7 +237,7 @@ def _parse_jsonld_item(item: dict, source_url: str, out: list[Candidate]) -> Non
             parsed = urllib.parse.urlparse(sa_url)
             domain = parsed.netloc.lower().lstrip("www.")
             for sd, field in _SOCIAL_DOMAINS.items():
-                if sd in domain:
+                if sd in domain and _is_valid_social_profile(sa_url, sd):
                     out.append(Candidate(field, sa_url, source_url, raw_json, "json_ld"))
 
     # Person fields (founders / owners)
@@ -624,44 +648,102 @@ def _extract_about_page(soup: BeautifulSoup, source_url: str) -> list[Candidate]
             "designation", senior[1], source_url, senior[3],
             "html_content", "Needs review",
         ))
-    else:
-        # Fallback: scan designation keywords in text
-        for m in _DESIGNATION_RE.finditer(text):
-            designation = m.group(0)
-            start = max(0, m.start() - 80)
-            end = min(len(text), m.end() + 80)
-            context = _snippet(text[start:end])
-            candidates.append(Candidate(
-                "designation", designation, source_url, context,
-                "html_content", "Needs review",
-            ))
-
     # Org size from this page
     candidates.extend(_extract_org_size(soup, source_url, team_count=len(team_members)))
 
     return candidates
 
 
+_GENERIC_ORG_HEADINGS = {
+    "about us", "about", "contact us", "contact", "overview", "home", "welcome",
+    "team", "our team", "who we are", "leadership", "people", "careers",
+    "our services", "services", "our work", "projects", "our projects",
+    "portfolio", "privacy policy", "terms", "terms of use", "disclaimer",
+    "profile", "studio", "practice", "history", "philosophy", "menu", "navigation"
+}
+
+
+def _extract_brand_from_title(title: str, domain: str) -> Optional[str]:
+    """Extract clean brand name from a page <title> tag."""
+    if not title:
+        return None
+    raw = re.sub(r"\s+", " ", title).strip()
+    # Split by common title separators
+    parts = re.split(r"\s*[|—–\-::]\s*", raw)
+    candidates = []
+    for p in parts:
+        p_clean = p.strip()
+        p_lower = p_clean.lower()
+        if (
+            p_clean
+            and 2 <= len(p_clean) <= 60
+            and p_lower not in _GENERIC_ORG_HEADINGS
+            and not any(p_lower.startswith(x) for x in ("architect in", "architecture firm", "interior design", "best architecture", "welcome to", "home", "official site"))
+            and p_lower not in _INVALID_NAME_WORDS
+        ):
+            candidates.append(p_clean)
+
+    if not candidates:
+        return None
+    # If a candidate matches the domain key closely or is a strong brand name, prioritize it
+    dom_clean = domain.replace(".com", "").replace(".co.in", "").replace(".in", "").replace(".org", "").replace("www.", "")
+    for c in candidates:
+        c_slug = re.sub(r"[^a-zA-Z0-9]", "", c.lower())
+        if dom_clean in c_slug or c_slug in dom_clean:
+            return c
+    return candidates[0]
+
+
 def _extract_org_name_from_html(soup: BeautifulSoup, source_url: str) -> list[Candidate]:
-    """Fall-back org name from heading tags."""
+    """
+    Extract org name:
+    1. Scan headings (h1 to h6), strictly filtering generic headings ("About Us", "Contact Us", "Overview", "Home", "Welcome", "Team", etc.)
+    2. Fall back to <title> tag brand name
+    3. Fall back to domain key
+    """
+    from scraper.validator import normalise_domain
+    dom = normalise_domain(source_url)
     candidates: list[Candidate] = []
-    for tag_name in ("h1", "h2"):
+
+    # 1. Non-generic heading across all heading levels (h1 through h6)
+    for tag_name in ("h1", "h2", "h3", "h4", "h5", "h6"):
         for tag in soup.find_all(tag_name):
             text = _clean(tag.get_text(separator=" ", strip=True))
+            if not text:
+                continue
+            text_lower = text.lower().strip()
             if (
-                text
-                and 3 < len(text) < 120
-                and text.lower() not in _INVALID_NAME_WORDS
-                and not any(text.lower().startswith(x) for x in ("about us", "contact us", "our services", "our projects", "our team", "privacy policy", "terms"))
+                3 < len(text) < 120
+                and text_lower not in _GENERIC_ORG_HEADINGS
+                and not any(text_lower.startswith(x) for x in _GENERIC_ORG_HEADINGS)
+                and text_lower not in _INVALID_NAME_WORDS
             ):
                 candidates.append(Candidate(
                     "org_name", text, source_url,
                     f"<{tag_name}>{text}</{tag_name}>",
                     "html_content",
                 ))
-                break
-        if candidates:
-            break
+                return candidates
+
+    # 2. Fall back to <title> tag brand name
+    title = soup.title.string if soup.title and soup.title.string else None
+    if title:
+        brand = _extract_brand_from_title(title, dom)
+        if brand:
+            candidates.append(Candidate(
+                "org_name", brand, source_url,
+                f"<title>{title.strip()}</title>",
+                "html_meta",
+            ))
+            return candidates
+
+    # 3. Fall back to domain key
+    if dom:
+        candidates.append(Candidate(
+            "org_name", dom, source_url,
+            f"Domain key fallback: {dom}",
+            "structured",
+        ))
     return candidates
 
 
@@ -696,16 +778,12 @@ def _extract_city(soup: BeautifulSoup, source_url: str, market_city: Optional[st
         snippet = _snippet(text[max(0, idx - 60): idx + len(city) + 60])
         return [Candidate("city", city, source_url, snippet, "html_content", "Extracted")]
 
-    # Fallback to market-city filter labelled "inferred"
-    if market_city and market_city.strip():
-        m_city = market_city.strip().title()
-        return [Candidate(
-            "city", m_city, source_url,
-            f"Inferred from market city filter: {m_city}",
-            "inferred", "Needs review",
-        )]
-
-    return []
+    # If no city is found in the fetched HTML, output "Not found". Do not infer.
+    return [Candidate(
+        "city", "Not found", source_url,
+        "No city found in fetched HTML",
+        "html_content", "Not found",
+    )]
 
 
 # ─── Website field ────────────────────────────────────────────────────────────
@@ -920,8 +998,8 @@ def extract(
     # Website
     candidates.append(_extract_website(source_url))
 
-    # City (JSON-LD addresses take precedence, then HTML text, then market_city fallback)
-    if not any(c.field_name == "city" for c in candidates):
+    # City (JSON-LD addresses take precedence, then HTML text)
+    if not any(c.field_name == "city" and c.value and c.value != "Not found" for c in candidates):
         candidates.extend(_extract_city(soup, source_url, market_city=market_city))
 
     # Gallery images (useful for visual intelligence)

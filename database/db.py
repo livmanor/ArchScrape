@@ -457,23 +457,27 @@ def get_leads_data(
             if src:
                 source_urls.add(src)
 
-            if fn == "org_name" and not org_name and val:
+            if fn == "org_name" and not org_name and val and val.lower() not in (
+                "about us", "about", "contact us", "contact", "overview", "home", "welcome",
+                "team", "our team", "portfolio", "services", "our services"
+            ):
                 org_name = val
-            elif fn == "owner_name" and not owner_name and val:
+            elif fn == "owner_name" and not owner_name and val and val != "Not found":
                 owner_name = val
                 owner_status = stat
-            elif fn == "owner_name" and val:
+            elif fn == "owner_name" and val and val != "Not found":
                 owner_status = stat
-            elif fn == "designation" and not designation and val:
+            elif fn == "designation" and not designation and val and val != "Not found":
                 designation = val
-            elif fn == "org_size" and not c_org_size and val:
+            elif fn == "org_size" and not c_org_size and val and val != "Not found":
                 c_org_size = val
-            elif fn == "org_size_basis" and not org_size_basis and val:
+            elif fn == "org_size_basis" and not org_size_basis and val and val != "not_found":
                 org_size_basis = val
-            elif fn == "city" and not c_city and val:
+            elif fn == "city" and not c_city and val and val != "Not found":
                 c_city = val
                 city_status = stat
-            elif fn == "city" and val:
+            elif fn == "city" and val and val != "Not found":
+                c_city = val
                 city_status = stat
             elif fn in ("phone", "mobile") and val:
                 if val not in phones:
@@ -487,10 +491,17 @@ def get_leads_data(
                 if fn not in socials:
                     socials[fn] = val
 
-        if not org_name or org_name.lower() in ("about us", "contact us", "our team", "home", "portfolio", "services"):
+        if not org_name or org_name.lower() in (
+            "about us", "about", "contact us", "contact", "overview", "home", "welcome",
+            "team", "our team", "portfolio", "services", "our services"
+        ):
             org_name = c["domain_key"]
         owner_name = owner_name or "Not found"
-        designation = designation or "Not found"
+        # Only output designation if a person name was also found. Otherwise "Not found".
+        if not owner_name or owner_name == "Not found":
+            designation = "Not found"
+        else:
+            designation = designation or "Not found"
         c_org_size = c_org_size or "Not found"
         org_size_basis = org_size_basis or "not_found"
         c_city = c_city or "Not found"

@@ -437,17 +437,24 @@ def find_and_extract_company_lead(
     if not org_name:
         for item in field_sources.get("org_name", []):
             val = item["value"]
-            if val and val.lower() not in ("about us", "contact us", "our team", "home", "portfolio", "services"):
+            if val and val.lower() not in (
+                "about us", "about", "contact us", "contact", "overview", "home",
+                "welcome", "team", "our team", "portfolio", "services", "our services"
+            ):
                 org_name = val
                 break
     org_name = org_name or domain
 
     owner_item = (field_sources.get("owner_name") or [None])[0]
-    owner_name = owner_item["value"] if owner_item else "Not found"
-    owner_status = owner_item["verification_status"] if owner_item else "Not found"
+    owner_name = owner_item["value"] if owner_item and owner_item.get("value") and owner_item["value"] != "Not found" else "Not found"
+    owner_status = owner_item["verification_status"] if owner_item and owner_name != "Not found" else "Not found"
 
-    desig_item = (field_sources.get("designation") or [None])[0]
-    designation = desig_item["value"] if desig_item else "Not found"
+    # Only output designation if a person name was also found. Otherwise "Not found".
+    if owner_name == "Not found" or not owner_name:
+        designation = "Not found"
+    else:
+        desig_item = (field_sources.get("designation") or [None])[0]
+        designation = desig_item["value"] if desig_item and desig_item.get("value") and desig_item["value"] != "Not found" else "Not found"
 
     size_item = (field_sources.get("org_size") or [None])[0]
     org_size = size_item["value"] if size_item else "Not found"
@@ -455,7 +462,11 @@ def find_and_extract_company_lead(
     basis_item = (field_sources.get("org_size_basis") or [None])[0]
     org_size_basis = basis_item["value"] if basis_item else "not_found"
 
-    city_item = (field_sources.get("city") or [None])[0]
+    city_item = None
+    for item in field_sources.get("city", []):
+        if item.get("value") and item["value"] != "Not found":
+            city_item = item
+            break
     city = city_item["value"] if city_item else "Not found"
 
     # Emails
