@@ -320,6 +320,25 @@ _STATED_SIZE_RES: list[re.Pattern] = [
 ]
 
 
+_NON_PERSON_WORDS = {
+    # Materials, construction trades & products
+    "marble", "marbles", "granite", "granites", "stone", "stones", "tile", "tiles",
+    "ceramic", "ceramics", "timber", "wood", "wooden", "glass", "steel", "iron",
+    "metal", "metals", "concrete", "cement", "brick", "bricks", "paint", "paints",
+    "wallpaper", "lighting", "luminaire", "furniture", "furnishings", "fabrication",
+    "plumbing", "electrical", "hvac", "sanitary", "sanitaryware", "flooring",
+    "cladding", "curtains", "blinds", "upholstery", "hardware", "plywood", "laminates",
+    "quartz", "composite", "terrazzo", "veneers",
+    # Commercial roles, suppliers & vendor designations
+    "supplier", "suppliers", "vendor", "vendors", "contractor", "contractors",
+    "consultant", "consultants", "dealer", "dealers", "distributor", "distributors",
+    "manufacturer", "manufacturers", "partner", "partners", "partnership", "client",
+    "clients", "sponsor", "sponsors", "collaborator", "collaborators", "credits",
+    "agency", "enterprises", "industries", "solutions", "services", "technologies",
+    "pvt", "ltd", "llp", "inc", "corp", "corporation", "company", "holdings",
+    "associates", "creations", "atelier", "hub", "boutique", "store", "shop",
+}
+
 _INVALID_NAME_WORDS = {
     "about", "team", "our team", "contact", "studio", "practice", "architecture",
     "architects", "interior", "interiors", "design", "designers", "services",
@@ -327,7 +346,26 @@ _INVALID_NAME_WORDS = {
     "homepage", "profile", "leadership", "people", "awards", "news", "careers",
     "work", "works", "home", "search", "menu", "navigation", "india", "studio",
     "founder", "founders", "director", "architect", "management", "history", "philosophy",
-}
+} | _NON_PERSON_WORDS
+
+_IGNORE_SECTION_KW = re.compile(
+    r"\b(credits?|collaborators?|vendors?|suppliers?|materials?|partner\s*brands?|clients?|sponsors?|contractors?|consultants?|brands?)\b",
+    re.I,
+)
+
+
+def _is_inside_ignored_section(tag: Tag) -> bool:
+    """Check if tag is nested inside a vendor, credit, client, or supplier section."""
+    curr = tag
+    for _ in range(5):
+        if not curr or not hasattr(curr, "get"):
+            break
+        cls_str = " ".join(curr.get("class", [])) if curr.get("class") else ""
+        id_str = str(curr.get("id", ""))
+        if _IGNORE_SECTION_KW.search(cls_str) or _IGNORE_SECTION_KW.search(id_str):
+            return True
+        curr = curr.parent
+    return False
 
 
 def _clean_name(text: str) -> Optional[str]:
@@ -344,7 +382,9 @@ def _clean_name(text: str) -> Optional[str]:
         return None
     if not all(re.match(r"^[A-Za-z'.-]+$", p) for p in parts):
         return None
-    if any(p.lower() in _INVALID_NAME_WORDS for p in parts):
+    # Reject if any token is a known material, vendor noun, or invalid word
+    tokens = {p.lower() for p in parts}
+    if tokens & _INVALID_NAME_WORDS:
         return None
     return clean
 
@@ -413,6 +453,8 @@ def _extract_team_members(soup: BeautifulSoup, source_url: str) -> list[tuple[st
 
     # 1. Cards with class names like team, member, person, profile, leader
     for card in soup.find_all(["div", "li", "article", "section"], class_=True):
+        if _is_inside_ignored_section(card):
+            continue
         cls_str = " ".join(card.get("class", [])).lower()
         if any(k in cls_str for k in ("team", "member", "person", "leader", "profile", "bio", "founder", "staff")):
             name_tag = (
@@ -436,6 +478,8 @@ def _extract_team_members(soup: BeautifulSoup, source_url: str) -> list[tuple[st
 
     # 2. Heading followed by designation in sibling
     for h in soup.find_all(["h2", "h3", "h4", "h5"]):
+        if _is_inside_ignored_section(h):
+            continue
         name_clean = _clean_name(h.get_text(strip=True))
         if name_clean and name_clean.lower() not in seen_names:
             sib = h.find_next_sibling(["p", "span", "div", "h4", "h5", "h6"])
