@@ -586,7 +586,12 @@ def _extract_org_name_from_html(soup: BeautifulSoup, source_url: str) -> list[Ca
     for tag_name in ("h1", "h2"):
         for tag in soup.find_all(tag_name):
             text = _clean(tag.get_text(separator=" ", strip=True))
-            if text and 3 < len(text) < 120:
+            if (
+                text
+                and 3 < len(text) < 120
+                and text.lower() not in _INVALID_NAME_WORDS
+                and not any(text.lower().startswith(x) for x in ("about us", "contact us", "our services", "our projects", "our team", "privacy policy", "terms"))
+            ):
                 candidates.append(Candidate(
                     "org_name", text, source_url,
                     f"<{tag_name}>{text}</{tag_name}>",

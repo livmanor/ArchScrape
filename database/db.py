@@ -486,7 +486,8 @@ def get_leads_data(
                 if fn not in socials:
                     socials[fn] = val
 
-        org_name = org_name or c["domain_key"]
+        if not org_name or org_name.lower() in ("about us", "contact us", "our team", "home", "portfolio", "services"):
+            org_name = c["domain_key"]
         owner_name = owner_name or "Not found"
         designation = designation or "Not found"
         c_org_size = c_org_size or "Not found"
