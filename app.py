@@ -574,9 +574,402 @@ st.markdown("""
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# PAGE: Leads (CEO LEADS TOOL)
+# PAGE: 🎯 Find Company Leads (Instant Target Company Lead & Sources Finder)
 # ═══════════════════════════════════════════════════════════════════════════════
-if nav == "💼 Leads":
+if nav == "🎯 Find Company Leads":
+    st.markdown('<div class="input-card">', unsafe_allow_html=True)
+    st.markdown('<div class="input-card-title">🎯 Instant Company Lead & Sources Finder</div>', unsafe_allow_html=True)
+    st.markdown(
+        "<div style='font-size:0.88rem;color:#94a3b8;margin-bottom:14px'>"
+        "Enter any target company name or website. The engine discovers its official online presence in real-time, "
+        "crawls verified public web pages, extracts executive leads, and shows the <strong>exact sources it retrieved each data point from</strong>. "
+        "<strong>Zero mockups. 100% verified live data.</strong>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    # 1-click Quick Presets
+    st.markdown("<div style='font-size:0.8rem;color:#cbd5e1;margin-bottom:8px'>⚡ <strong>Quick Presets:</strong> Click any company to instantly find leads & sources:</div>", unsafe_allow_html=True)
+    p1, p2, p3, p4, p5, p6 = st.columns(6)
+    with p1:
+        if st.button("🏛️ Morphogenesis", use_container_width=True, key="btn_pre_morph"):
+            st.session_state["target_company_search"] = "Morphogenesis"
+            st.session_state["target_city_hint"] = "Delhi"
+            st.session_state["trigger_auto_find"] = True
+            st.rerun()
+    with p2:
+        if st.button("🏛️ Studio Lotus", use_container_width=True, key="btn_pre_lotus"):
+            st.session_state["target_company_search"] = "Studio Lotus"
+            st.session_state["target_city_hint"] = "Delhi"
+            st.session_state["trigger_auto_find"] = True
+            st.rerun()
+    with p3:
+        if st.button("🏛️ HCP Design", use_container_width=True, key="btn_pre_hcp"):
+            st.session_state["target_company_search"] = "HCP Design"
+            st.session_state["target_city_hint"] = "Ahmedabad"
+            st.session_state["trigger_auto_find"] = True
+            st.rerun()
+    with p4:
+        if st.button("🏛️ INI Design", use_container_width=True, key="btn_pre_ini"):
+            st.session_state["target_company_search"] = "INI Design Studio"
+            st.session_state["target_city_hint"] = "Ahmedabad"
+            st.session_state["trigger_auto_find"] = True
+            st.rerun()
+    with p5:
+        if st.button("🏛️ Modo Designs", use_container_width=True, key="btn_pre_modo"):
+            st.session_state["target_company_search"] = "Modo Designs"
+            st.session_state["target_city_hint"] = "Ahmedabad"
+            st.session_state["trigger_auto_find"] = True
+            st.rerun()
+    with p6:
+        if st.button("🏛️ Sanjay Puri", use_container_width=True, key="btn_pre_puri"):
+            st.session_state["target_company_search"] = "Sanjay Puri Architects"
+            st.session_state["target_city_hint"] = "Mumbai"
+            st.session_state["trigger_auto_find"] = True
+            st.rerun()
+
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+
+    col_q, col_cat, col_city = st.columns([3, 1.4, 1.4])
+    with col_q:
+        target_query = st.text_input(
+            "🏢 Target Company Name or Website",
+            value=st.session_state.get("target_company_search", ""),
+            placeholder="e.g. Morphogenesis, Studio Lotus, HCP Design, inidesignstudio.com, Modo Designs...",
+            help="Type the company name or paste their website URL. No mocking — live web discovery and scraping will be executed.",
+            key="input_target_company_box",
+        )
+    with col_cat:
+        category = st.selectbox(
+            "Industry Category",
+            ["architecture", "interior", "other"],
+            key="find_lead_category",
+        )
+    with col_city:
+        city_hint = st.text_input(
+            "Market City (Optional)",
+            value=st.session_state.get("target_city_hint", ""),
+            placeholder="e.g. Ahmedabad, Mumbai",
+            key="find_lead_city_hint",
+        )
+
+    btn_col1, btn_col2, btn_col3 = st.columns([2.5, 1, 3.5])
+    with btn_col1:
+        find_btn = st.button("🚀 Find Leads & Sources", type="primary", use_container_width=True, key="btn_run_lead_find")
+    with btn_col2:
+        clear_btn = st.button("🗑️ Clear", use_container_width=True, key="btn_clear_lead_find")
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    if clear_btn:
+        st.session_state["current_lead"] = None
+        st.session_state["target_company_search"] = ""
+        st.session_state["target_city_hint"] = ""
+        st.session_state["lead_finder_log"] = []
+        if "trigger_auto_find" in st.session_state:
+            del st.session_state["trigger_auto_find"]
+        st.rerun()
+
+    should_find = find_btn or st.session_state.get("trigger_auto_find", False)
+    if should_find:
+        if "trigger_auto_find" in st.session_state:
+            del st.session_state["trigger_auto_find"]
+
+        query_to_run = (target_query or "").strip()
+        if not query_to_run:
+            st.warning("⚠️ Please enter a target company name or website.")
+        else:
+            st.session_state["target_company_search"] = query_to_run
+            progress = st.progress(0)
+            log_box = st.empty()
+            log_lines: list[str] = []
+
+            def log_callback(msg: str):
+                log_lines.append(msg)
+                log_box.markdown(
+                    f"<div style='background:rgba(0,0,0,0.4);border-radius:10px;padding:12px 16px;"
+                    f"font-family:monospace;font-size:0.8rem;color:#94a3b8;max-height:170px;overflow-y:auto;border:1px solid rgba(99,102,241,0.2)'>"
+                    + "<br>".join(log_lines[-10:]) +
+                    "</div>", unsafe_allow_html=True
+                )
+
+            progress.progress(15)
+            lead_result = find_and_extract_company_lead(
+                target_input=query_to_run,
+                db_path=DB_PATH,
+                category=category,
+                progress_callback=log_callback,
+                market_city=city_hint,
+            )
+            progress.progress(100)
+            st.session_state["current_lead"] = lead_result
+            st.session_state["lead_finder_log"] = log_lines
+            time.sleep(0.5)
+            log_box.empty()
+            st.rerun()
+
+    # ── Display Found Lead & Detailed Sources ─────────────────────────────────
+    lead = st.session_state.get("current_lead")
+    if not lead:
+        st.markdown("""
+        <div style='text-align:center;padding:50px 20px;color:#334155'>
+            <div style='font-size:3.5rem'>🎯</div>
+            <div style='font-family:Space Grotesk,sans-serif;font-size:1.25rem;color:#94a3b8;margin-top:12px;font-weight:600'>
+            Ready to find leads for any target company</div>
+            <div style='font-size:0.88rem;color:#64748b;margin-top:8px;max-width:550px;margin-left:auto;margin-right:auto'>
+            Enter a company name above or click one of the quick presets. Our live engine will crawl public pages, extract executive contacts, and show every source URL it retrieved from.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    elif not lead.get("ok"):
+        st.error(f"❌ {lead.get('error', 'Could not retrieve leads for this company')}")
+    else:
+        domain = lead["domain"]
+        org = lead["organisation"]
+        website = lead["url"]
+        owner = lead["owner_name"]
+        owner_status = lead["owner_status"]
+        desig = lead["designation"]
+        emails_list = lead.get("email_list", [])
+        phones_list = lead.get("mobile_list", [])
+        city = lead.get("city", "Not found")
+        org_size = lead.get("org_size", "Not found")
+        org_size_basis = lead.get("org_size_basis", "not_found")
+        res_source = lead.get("resolution", {}).get("source", "web_resolution")
+        sources_summary = lead.get("sources_summary", [])
+        field_sources = lead.get("field_sources", {})
+        services = lead.get("services", [])
+        projects = lead.get("projects", [])
+        gallery = lead.get("gallery", [])
+        socials = lead.get("social_links", {})
+
+        # ─── Master Company Header ──────────────────────────────────────────
+        st.markdown(f"""
+        <div class="intel-card" style="border-color:rgba(99,102,241,0.4);background:rgba(99,102,241,0.06);margin-bottom:20px">
+            <div class="intel-card-header">
+                <div>
+                    <div style="font-size:0.75rem;font-weight:700;color:#34d399;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:4px">
+                        ✓ Verified Lead Found & Sourced
+                    </div>
+                    <div class="company-name-big" style="font-size:1.6rem">{org}</div>
+                    <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                        <span class="company-domain-tag">🌐 {domain}</span>
+                        <span class="city-badge">📍 {city}</span>
+                        <span style="font-size:0.75rem;background:rgba(255,255,255,0.06);color:#94a3b8;padding:2px 8px;border-radius:6px">
+                            Discovered via: {res_source.replace('_', ' ').title()}
+                        </span>
+                        <span style="font-size:0.75rem;background:rgba(16,185,129,0.1);color:#34d399;padding:2px 8px;border-radius:6px">
+                            {len(lead.get('source_urls_list', []))} Pages Crawled
+                        </span>
+                    </div>
+                </div>
+                <a href="{website}" target="_blank"
+                   style="background:rgba(99,102,241,0.2);border:1px solid rgba(99,102,241,0.4);
+                          color:#a5b4fc;padding:10px 18px;border-radius:10px;text-decoration:none;
+                          font-size:0.85rem;font-weight:600;white-space:nowrap;display:inline-flex;align-items:center;gap:6px">
+                   🌐 Visit Official Site ↗
+                </a>
+            </div>
+            {f'<div style="font-size:0.88rem;color:#94a3b8;margin-top:10px;line-height:1.6">{lead.get("description", "")[:280]}...</div>' if lead.get("description") else ""}
+        </div>
+        """, unsafe_allow_html=True)
+
+        # ─── Executive Lead Badges Grid ─────────────────────────────────────
+        st.markdown("<div style='font-size:0.78rem;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:12px'>Executive Lead Profile</div>", unsafe_allow_html=True)
+        m_col1, m_col2, m_col3 = st.columns(3)
+        with m_col1:
+            st.markdown(f"""
+            <div class="source-card">
+                <div style="font-size:0.72rem;color:#64748b;text-transform:uppercase;font-weight:700">👤 Owner / Founder</div>
+                <div style="font-size:1.1rem;font-weight:700;color:#f8fafc;margin:4px 0">
+                    {owner}
+                    <span class="badge-{'review' if owner_status == 'Needs review' else ('extracted' if owner != 'Not found' else 'notfound')}">
+                        {owner_status}
+                    </span>
+                </div>
+                <div style="font-size:0.8rem;color:#94a3b8">💼 {desig}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        with m_col2:
+            email_html = ", ".join(f'<a href="mailto:{e}" style="color:#818cf8;text-decoration:none;font-weight:600">{e}</a>' for e in emails_list) if emails_list else '<span class="badge-notfound">Not found</span>'
+            phone_html = ", ".join(f'<a href="tel:{p}" style="color:#34d399;text-decoration:none;font-weight:600">{p}</a>' for p in phones_list) if phones_list else '<span class="badge-notfound">Not found</span>'
+            st.markdown(f"""
+            <div class="source-card">
+                <div style="font-size:0.72rem;color:#64748b;text-transform:uppercase;font-weight:700">✉️ Business Email</div>
+                <div style="font-size:0.88rem;margin:4px 0 8px">{email_html}</div>
+                <div style="font-size:0.72rem;color:#64748b;text-transform:uppercase;font-weight:700">📞 Phone / Mobile</div>
+                <div style="font-size:0.88rem;margin-top:2px">{phone_html}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        with m_col3:
+            st.markdown(f"""
+            <div class="source-card">
+                <div style="font-size:0.72rem;color:#64748b;text-transform:uppercase;font-weight:700">📍 Location / City</div>
+                <div style="font-size:1.05rem;font-weight:600;color:#fbbf24;margin:4px 0">{city}</div>
+                <div style="font-size:0.72rem;color:#64748b;text-transform:uppercase;font-weight:700;margin-top:6px">👥 Organisation Size</div>
+                <div style="font-size:0.88rem;color:#cbd5e1;margin-top:2px">
+                    <strong>{org_size}</strong>
+                    <span class="badge-basis">{org_size_basis}</span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        # ── Export & DB save status ──────────────────────────────────────────
+        exp_col1, exp_col2, exp_col3 = st.columns([1.5, 1.5, 3])
+        with exp_col1:
+            csv_lead_data = export_leads_csv([lead])
+            st.download_button(
+                "⬇️ Download Lead CSV",
+                data=csv_lead_data,
+                file_name=f"{domain}_lead.csv",
+                mime="text/csv",
+                use_container_width=True,
+                key="btn_dl_lead_csv",
+            )
+        with exp_col2:
+            excel_lead_data = export_leads_excel([lead])
+            st.download_button(
+                "⬇️ Download Lead Excel",
+                data=excel_lead_data,
+                file_name=f"{domain}_lead.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+                key="btn_dl_lead_excel",
+            )
+        with exp_col3:
+            st.markdown(f"<div style='font-size:0.8rem;color:#34d399;margin-top:8px'>💾 <em>Lead automatically persisted to database (Company ID #{lead.get('company_id', 'N/A')}).</em></div>", unsafe_allow_html=True)
+
+        st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
+
+        # ═════════════════════════════════════════════════════════════════════
+        # 📍 SOURCES IT HAS RETRIEVED FROM (Core User Requirement)
+        # ═════════════════════════════════════════════════════════════════════
+        st.markdown(f"""
+        <div style="margin:20px 0 12px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+            <div style="font-family:'Space Grotesk',sans-serif;font-size:1.25rem;font-weight:700;color:#a5b4fc;display:flex;align-items:center;gap:8px">
+                📍 Sources It Has Retrieved From
+            </div>
+            <div style="font-size:0.8rem;color:#94a3b8">
+                Strict Verifiable Evidence: <strong>{len(lead.get('source_urls_list', []))}</strong> public URLs crawled
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        field_labels = [
+            ("owner_name", "👤 Owner / Founder", lead.get("owner_name")),
+            ("designation", "💼 Designation", lead.get("designation")),
+            ("email", "✉️ Business Email", lead.get("email")),
+            ("phone", "📞 Phone / Mobile", lead.get("mobile")),
+            ("city", "📍 City / Location", lead.get("city")),
+            ("org_size", "👥 Organisation Size", lead.get("org_size")),
+            ("website", "🌐 Official Website", lead.get("url")),
+            ("linkedin", "💼 LinkedIn Profile", socials.get("linkedin")),
+            ("instagram", "📸 Instagram Profile", socials.get("instagram")),
+            ("facebook", "👍 Facebook Page", socials.get("facebook")),
+        ]
+
+        for f_key, f_label, f_current_val in field_labels:
+            candidates_for_field = field_sources.get(f_key, [])
+            if not candidates_for_field:
+                continue
+
+            primary_c = candidates_for_field[0]
+            src_url = primary_c.get("source_url") or website
+            method = primary_c.get("method", "html_content")
+            snippet = primary_c.get("supporting_text") or "Direct extraction from page structure"
+            status = primary_c.get("verification_status", "Extracted")
+
+            st.markdown(f"""
+            <div class="source-card">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:6px">
+                    <div>
+                        <span style="font-size:0.82rem;font-weight:700;color:#e2e8f0">{f_label}:</span>
+                        <span style="font-size:0.9rem;font-weight:600;color:#a5b4fc;margin-left:6px">{primary_c.get('value')}</span>
+                    </div>
+                    <div>
+                        <span class="badge-{'review' if status == 'Needs review' else ('extracted' if status == 'Extracted' else 'notfound')}">
+                            {status}
+                        </span>
+                        <span style="font-size:0.72rem;background:rgba(255,255,255,0.06);color:#94a3b8;padding:2px 7px;border-radius:4px;margin-left:4px">
+                            Method: {method}
+                        </span>
+                    </div>
+                </div>
+                <div style="margin-top:8px">
+                    <span style="font-size:0.75rem;color:#64748b;font-weight:600">RETRIEVED FROM SOURCE:</span><br>
+                    <a href="{src_url}" target="_blank" class="source-link-badge" style="margin-top:3px">
+                        🔗 {src_url} ↗
+                    </a>
+                </div>
+                <div class="quote-snippet">
+                    "{snippet}"
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        # ── Expandable Crawl Matrix ──────────────────────────────────────────
+        with st.expander(f"🔍 Complete Crawl Matrix ({len(sources_summary)} pages crawled with status & fields)", expanded=False):
+            if sources_summary:
+                crawl_table_data = []
+                for s in sources_summary:
+                    crawl_table_data.append({
+                        "Source URL": s["url"],
+                        "Page Role": s["page_role"].title(),
+                        "Status": f"HTTP {s['status_code']}",
+                        "Items Extracted": s["candidates_count"],
+                        "Discovered Fields": ", ".join(s["fields"][:6]) + ("..." if len(s["fields"]) > 6 else ""),
+                    })
+                st.dataframe(pd.DataFrame(crawl_table_data), use_container_width=True, hide_index=True)
+
+        # ── Deep Dive Offerings & Portfolio Tabs ─────────────────────────────
+        st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+        tab_svc, tab_proj, tab_soc, tab_gal = st.tabs(["🛠 Services & Offerings", "🏗 Portfolio Projects", "🔗 Social Media Channels", "🖼 Visual Gallery"])
+
+        with tab_svc:
+            if services:
+                st.markdown('<div class="intel-section-label">Services / Specialities</div>', unsafe_allow_html=True)
+                st.markdown("".join(f'<span class="service-tag">{s}</span>' for s in services), unsafe_allow_html=True)
+            else:
+                st.caption("No specific service taxonomies identified on public pages.")
+
+        with tab_proj:
+            if projects:
+                st.markdown('<div class="intel-section-label">Projects & Portfolio Mentions</div>', unsafe_allow_html=True)
+                st.markdown("".join(f'<span class="project-tag">📐 {p}</span>' for p in projects), unsafe_allow_html=True)
+            else:
+                st.caption("No portfolio project names found in public page markup.")
+
+        with tab_soc:
+            if socials:
+                links_html = ""
+                for platform, link in socials.items():
+                    icon = _social_icon(platform)
+                    links_html += f'<a href="{link}" target="_blank" class="social-link">{icon} {platform.title()} ↗</a>'
+                st.markdown(f'<div style="display:flex;flex-wrap:wrap;gap:6px">{links_html}</div>', unsafe_allow_html=True)
+            else:
+                st.caption("No public social channels detected.")
+
+        with tab_gal:
+            if gallery:
+                cols = st.columns(min(4, len(gallery)))
+                for img_idx, img_url in enumerate(gallery[:12]):
+                    with cols[img_idx % 4]:
+                        try:
+                            st.image(img_url, use_container_width=True)
+                        except Exception:
+                            st.markdown(f'<a href="{img_url}" target="_blank">Image {img_idx+1}</a>', unsafe_allow_html=True)
+            else:
+                st.caption("No gallery images found.")
+
+    st.markdown("<hr style='margin:28px 0'>", unsafe_allow_html=True)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PAGE: 💼 Executive Leads Directory
+# ═══════════════════════════════════════════════════════════════════════════════
+elif nav == "💼 Executive Leads Directory":
     st.markdown('<div class="input-card">', unsafe_allow_html=True)
     st.markdown('<div class="input-card-title">💼 Executive Leads Directory</div>', unsafe_allow_html=True)
     st.markdown(
