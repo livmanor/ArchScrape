@@ -21,6 +21,27 @@ def get_db_path() -> pathlib.Path:
     return _DB_PATH
 
 
+def migrate_db(conn: sqlite3.Connection) -> None:
+    """
+    Safely apply schema migrations to the companies table without dropping data.
+    Ensures owner_name, designation, org_size, org_size_basis, city columns exist.
+    """
+    cur = conn.execute("PRAGMA table_info(companies)")
+    existing_cols = {row[1] for row in cur.fetchall()}
+    new_cols = [
+        ("owner_name", "TEXT"),
+        ("designation", "TEXT"),
+        ("org_size", "TEXT"),
+        ("org_size_basis", "TEXT"),
+        ("city", "TEXT"),
+    ]
+    for col_name, col_type in new_cols:
+        if col_name not in existing_cols:
+            conn.execute(f"ALTER TABLE companies ADD COLUMN {col_name} {col_type}")
+            logger.info("Migrated companies table: added column %s", col_name)
+    conn.commit()
+
+
 def init_db(db_path: pathlib.Path | None = None) -> pathlib.Path:
     """Create the database file and apply the schema if not already applied."""
     path = db_path or _DB_PATH
@@ -30,6 +51,7 @@ def init_db(db_path: pathlib.Path | None = None) -> pathlib.Path:
 
     with sqlite3.connect(str(path)) as conn:
         conn.executescript(schema_sql)
+        migrate_db(conn)
         conn.commit()
 
     logger.info("Database initialised at %s", path)
@@ -378,3 +400,131 @@ def get_summary_metrics(conn: sqlite3.Connection) -> dict:
         "last_run": dict(last_run) if last_run else None,
         "errors_last_run": errors_last_run,
     }
+
+
+def get_leads_data(
+    conn: sqlite3.Connection,
+    search: str = "",
+    city: str = "",
+    org_size: str = "",
+) -> list[dict]:
+    """
+    Returns one row per company formatted as a Lead record with:
+    owner_name, organisation, designation, org_size, mobile, email, city, source_urls, social_links.
+    Also returns metadata for UI badges (owner_status, email_status, mobile_status, org_size_basis).
+    """
+    companies = conn.execute("SELECT * FROM companies ORDER BY id DESC").fetchall()
+    leads = []
+
+    for c in companies:
+        c_id = c["id"]
+        ev_rows = conn.execute(
+            "SELECT * FROM evidence WHERE company_id = ? ORDER BY is_primary DESC, id ASC",
+            (c_id,),
+        ).fetchall()
+
+        # Gather fields
+        org_name = None
+        c_cols = c.keys()
+        owner_name = c["owner_name"] if "owner_name" in c_cols and c["owner_name"] else None
+        designation = c["designation"] if "designation" in c_cols and c["designation"] else None
+        c_org_size = c["org_size"] if "org_size" in c_cols and c["org_size"] else None
+        org_size_basis = c["org_size_basis"] if "org_size_basis" in c_cols and c["org_size_basis"] else None
+        c_city = c["city"] if "city" in c_cols and c["city"] else None
+
+        phones = []
+        emails = []
+        socials = {}
+        source_urls = set()
+        if c["seed_url"]:
+            source_urls.add(c["seed_url"])
+
+        owner_status = "Not found"
+        email_status = "Not found"
+        mobile_status = "Not found"
+        city_status = "Not found"
+
+        for row in ev_rows:
+            fn = row["field_name"]
+            val = row["extracted_value"]
+            src = row["source_url"]
+            stat = row["verification_status"]
+            if src:
+                source_urls.add(src)
+
+            if fn == "org_name" and not org_name and val:
+                org_name = val
+            elif fn == "owner_name" and not owner_name and val:
+                owner_name = val
+                owner_status = stat
+            elif fn == "owner_name" and val:
+                owner_status = stat
+            elif fn == "designation" and not designation and val:
+                designation = val
+            elif fn == "org_size" and not c_org_size and val:
+                c_org_size = val
+            elif fn == "org_size_basis" and not org_size_basis and val:
+                org_size_basis = val
+            elif fn == "city" and not c_city and val:
+                c_city = val
+                city_status = stat
+            elif fn == "city" and val:
+                city_status = stat
+            elif fn in ("phone", "mobile") and val:
+                if val not in phones:
+                    phones.append(val)
+                mobile_status = stat
+            elif fn == "email" and val:
+                if val not in emails:
+                    emails.append(val)
+                email_status = stat
+            elif fn in ("linkedin", "instagram", "facebook", "twitter", "youtube", "houzz", "behance") and val:
+                if fn not in socials:
+                    socials[fn] = val
+
+        org_name = org_name or c["domain_key"]
+        owner_name = owner_name or "Not found"
+        designation = designation or "Not found"
+        c_org_size = c_org_size or "Not found"
+        org_size_basis = org_size_basis or "not_found"
+        c_city = c_city or "Not found"
+        mobile_str = ", ".join(phones) if phones else "Not found"
+        email_str = ", ".join(emails) if emails else "Not found"
+        source_urls_list = sorted(list(source_urls))
+        source_urls_str = ", ".join(source_urls_list)
+
+        lead = {
+            "id": c_id,
+            "owner_name": owner_name,
+            "organisation": org_name,
+            "designation": designation,
+            "org_size": c_org_size,
+            "mobile": mobile_str,
+            "email": email_str,
+            "city": c_city,
+            "source_urls": source_urls_str,
+            "source_urls_list": source_urls_list,
+            "social_links": socials,
+            "social_links_str": ", ".join(f"{k}: {v}" for k, v in socials.items()) if socials else "Not found",
+            "owner_status": owner_status if owner_name != "Not found" else "Not found",
+            "email_status": email_status if email_str != "Not found" else "Not found",
+            "mobile_status": mobile_status if mobile_str != "Not found" else "Not found",
+            "city_status": city_status if c_city != "Not found" else "Not found",
+            "org_size_basis": org_size_basis,
+        }
+
+        # Filtering
+        if search:
+            s = search.lower()
+            if not any(s in str(v).lower() for v in (owner_name, org_name, designation, c_city, mobile_str, email_str)):
+                continue
+        if city and city.lower() != "all":
+            if city.lower() not in c_city.lower():
+                continue
+        if org_size and org_size.lower() != "all":
+            if org_size.lower() != c_org_size.lower():
+                continue
+
+        leads.append(lead)
+
+    return leads

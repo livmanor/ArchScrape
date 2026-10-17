@@ -26,6 +26,11 @@ CREATE TABLE IF NOT EXISTS companies (
     domain_key      TEXT    NOT NULL UNIQUE,   -- normalised domain used as dedup key
     seed_url        TEXT    NOT NULL,
     category        TEXT    NOT NULL DEFAULT 'architecture',  -- architecture | interior | other
+    owner_name      TEXT,
+    designation     TEXT,
+    org_size        TEXT,
+    org_size_basis  TEXT,
+    city            TEXT,
     created_at      TEXT    NOT NULL,
     updated_at      TEXT    NOT NULL,
     last_scraped_at TEXT,
@@ -34,6 +39,7 @@ CREATE TABLE IF NOT EXISTS companies (
 
 CREATE INDEX IF NOT EXISTS idx_companies_domain ON companies(domain_key);
 CREATE INDEX IF NOT EXISTS idx_companies_category ON companies(category);
+CREATE INDEX IF NOT EXISTS idx_companies_city ON companies(city);
 
 -- ─────────────────────────────────────────────
 -- Field-level evidence

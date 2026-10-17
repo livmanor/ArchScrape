@@ -222,3 +222,72 @@ def export_csv(
     buf = io.StringIO()
     df.to_csv(buf, index=False)
     return buf.getvalue()
+
+
+LEADS_EXPORT_COLUMNS = [
+    "owner_name", "organisation", "designation", "org_size",
+    "mobile", "email", "city", "source_urls", "social_links"
+]
+
+
+def get_leads(
+    db_path: pathlib.Path | None = None,
+    search: str = "",
+    city: str = "",
+    org_size: str = "",
+) -> list[dict]:
+    """
+    Returns one row per company with the exact leads fields:
+    owner_name, organisation, designation, org_size, mobile, email, city, source_urls, social_links.
+    """
+    with db.get_connection(db_path) as conn:
+        return db.get_leads_data(conn, search=search, city=city, org_size=org_size)
+
+
+def export_leads_csv(leads: list[dict]) -> str:
+    """Return CSV formatted string of leads table with the exact columns."""
+    import io
+    import pandas as pd
+
+    rows = []
+    for l in leads:
+        rows.append({
+            "owner_name": l.get("owner_name", "Not found"),
+            "organisation": l.get("organisation", ""),
+            "designation": l.get("designation", "Not found"),
+            "org_size": l.get("org_size", "Not found"),
+            "mobile": l.get("mobile", "Not found"),
+            "email": l.get("email", "Not found"),
+            "city": l.get("city", "Not found"),
+            "source_urls": l.get("source_urls", ""),
+            "social_links": l.get("social_links_str", "Not found"),
+        })
+    df = pd.DataFrame(rows, columns=LEADS_EXPORT_COLUMNS)
+    buf = io.StringIO()
+    df.to_csv(buf, index=False)
+    return buf.getvalue()
+
+
+def export_leads_excel(leads: list[dict]) -> bytes:
+    """Return Excel bytes of leads table with the exact columns."""
+    import io
+    import pandas as pd
+
+    rows = []
+    for l in leads:
+        rows.append({
+            "owner_name": l.get("owner_name", "Not found"),
+            "organisation": l.get("organisation", ""),
+            "designation": l.get("designation", "Not found"),
+            "org_size": l.get("org_size", "Not found"),
+            "mobile": l.get("mobile", "Not found"),
+            "email": l.get("email", "Not found"),
+            "city": l.get("city", "Not found"),
+            "source_urls": l.get("source_urls", ""),
+            "social_links": l.get("social_links_str", "Not found"),
+        })
+    df = pd.DataFrame(rows, columns=LEADS_EXPORT_COLUMNS)
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="Leads")
+    return buf.getvalue()

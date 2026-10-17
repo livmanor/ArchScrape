@@ -274,18 +274,101 @@ def _extract_meta(soup: BeautifulSoup, source_url: str) -> list[Candidate]:
     return candidates
 
 
+# ─── Seniority ranking for Owner/Designation ──────────────────────────────────
+_SENIORITY_RANKS: list[tuple[int, re.Pattern]] = [
+    (1, re.compile(r"\b(founder|co-founder|owner|proprietor)\b", re.I)),
+    (2, re.compile(r"\b(managing partner|managing director|ceo|chief executive officer)\b", re.I)),
+    (3, re.compile(r"\b(principal architect|principal)\b", re.I)),
+    (4, re.compile(r"\b(director|partner|design director|creative director|studio head)\b", re.I)),
+    (5, re.compile(r"\b(head of design|lead architect|senior architect|associate architect|architect|interior designer)\b", re.I)),
+]
+
+
+def _designation_rank(title: str) -> int:
+    for rank, pat in _SENIORITY_RANKS:
+        if pat.search(title):
+            return rank
+    return 99
+
+
+# ─── Stated Org Size and Team Buckets ─────────────────────────────────────────
+
+def _to_size_bucket(count: int) -> str:
+    if count <= 10:
+        return "1-10"
+    elif count <= 50:
+        return "11-50"
+    elif count <= 200:
+        return "51-200"
+    else:
+        return "200+"
+
+
+_STATED_SIZE_RES: list[re.Pattern] = [
+    re.compile(
+        r"\b(?:team|strength|staff|workforce|practice|firm|studio)\s+(?:of\s+)?(?:about|around|over|more than|approx(?:imately)?\s+)?(\d+)\+?\s*(?:professionals?|architects?|designers?|people|members?|employees?|talents?|specialists?)?\b",
+        re.I,
+    ),
+    re.compile(
+        r"\b(?:over|more than|nearly|around)?\s*(\d+)\+?\s+(?:professionals?|architects?|designers?|employees?|team members?|staff members?)\b",
+        re.I,
+    ),
+    re.compile(
+        r"\b(\d+)\s*(?:-|to)\s*(\d+)\s+(?:professionals?|architects?|designers?|employees?|people)\b",
+        re.I,
+    ),
+]
+
+
+_INVALID_NAME_WORDS = {
+    "about", "team", "our team", "contact", "studio", "practice", "architecture",
+    "architects", "interior", "interiors", "design", "designers", "services",
+    "projects", "portfolio", "read more", "view all", "all rights", "copyright",
+    "homepage", "profile", "leadership", "people", "awards", "news", "careers",
+    "work", "works", "home", "search", "menu", "navigation", "india", "studio",
+    "founder", "founders", "director", "architect", "management", "history", "philosophy",
+}
+
+
+def _clean_name(text: str) -> Optional[str]:
+    if not text:
+        return None
+    clean = re.sub(r"\s+", " ", text).strip()
+    clean = re.sub(r"^(?:Ar\.|Architect|Mr\.|Ms\.|Mrs\.|Dr\.|Prof\.)\s+", "", clean, flags=re.I).strip()
+    if len(clean) < 3 or len(clean) > 40:
+        return None
+    if clean.lower() in _INVALID_NAME_WORDS:
+        return None
+    parts = clean.split()
+    if len(parts) < 2 or len(parts) > 5:
+        return None
+    if not all(re.match(r"^[A-Za-z'.-]+$", p) for p in parts):
+        return None
+    if any(p.lower() in _INVALID_NAME_WORDS for p in parts):
+        return None
+    return clean
+
+
+def _is_junk_email(email: str) -> bool:
+    if re.search(r"\.(png|jpg|jpeg|gif|svg|webp|pdf|doc|css|js|ico)$", email, re.I):
+        return True
+    junk_domains = {"example.com", "domain.com", "sample.com", "yourdomain.com", "email.com"}
+    domain = email.split("@")[-1].lower()
+    return domain in junk_domains
+
+
 # ─── HTML content heuristics ─────────────────────────────────────────────────
 
 def _extract_contact_page(soup: BeautifulSoup, source_url: str) -> list[Candidate]:
     """
-    Extract phone numbers, emails from the visible text.
-    Avoids treating every person on the page as an owner.
+    Extract business phone numbers and emails from mailto: links and visible text.
     """
     candidates: list[Candidate] = []
     text = soup.get_text(separator=" ", strip=True)
 
+    # Phones
     phones = _extract_phones(text)
-    for ph in phones[:5]:  # at most 5
+    for ph in phones[:5]:
         idx = text.find(ph)
         snippet = _snippet(text[max(0, idx - 60): idx + len(ph) + 60])
         candidates.append(Candidate(
@@ -293,37 +376,206 @@ def _extract_contact_page(soup: BeautifulSoup, source_url: str) -> list[Candidat
             verification_status="Extracted",
         ))
 
-    emails = _extract_emails(text)
-    for em in emails[:5]:
-        idx = text.find(em)
-        snippet = _snippet(text[max(0, idx - 60): idx + len(em) + 60])
-        candidates.append(Candidate(
-            "email", em, source_url, snippet, "html_content",
-        ))
+    # Emails: mailto: links first, then text regex
+    seen_emails: set[str] = set()
 
+    for a in soup.find_all("a", href=True):
+        href = a["href"].strip()
+        if href.lower().startswith("mailto:"):
+            raw = href[7:].split("?")[0].strip()
+            if _EMAIL_RE.match(raw) and not _is_junk_email(raw) and raw.lower() not in seen_emails:
+                seen_emails.add(raw.lower())
+                snippet = f'<a href="{href}">{a.get_text(strip=True) or raw}</a>'
+                candidates.append(Candidate(
+                    "email", raw, source_url, snippet, "html_content",
+                    verification_status="Extracted",
+                ))
+
+    for em in _extract_emails(text):
+        if not _is_junk_email(em) and em.lower() not in seen_emails:
+            seen_emails.add(em.lower())
+            idx = text.find(em)
+            snippet = _snippet(text[max(0, idx - 60): idx + len(em) + 60])
+            candidates.append(Candidate(
+                "email", em, source_url, snippet, "html_content",
+                verification_status="Extracted",
+            ))
+
+    return candidates
+
+
+def _extract_team_members(soup: BeautifulSoup, source_url: str) -> list[tuple[str, str, int, str]]:
+    """
+    Finds (name, designation, rank, snippet) tuples from cards, headings, and text patterns.
+    """
+    team_members: list[tuple[str, str, int, str]] = []
+    seen_names: set[str] = set()
+
+    # 1. Cards with class names like team, member, person, profile, leader
+    for card in soup.find_all(["div", "li", "article", "section"], class_=True):
+        cls_str = " ".join(card.get("class", [])).lower()
+        if any(k in cls_str for k in ("team", "member", "person", "leader", "profile", "bio", "founder", "staff")):
+            name_tag = (
+                card.find(["h2", "h3", "h4", "h5", "strong", "b"])
+                or card.find(class_=re.compile(r"name", re.I))
+            )
+            desig_tag = (
+                card.find(class_=re.compile(r"role|designation|title|position", re.I))
+                or card.find(["p", "span"])
+            )
+            if name_tag:
+                name_clean = _clean_name(name_tag.get_text(strip=True))
+                if name_clean and name_clean.lower() not in seen_names:
+                    d_text = desig_tag.get_text(strip=True) if desig_tag else ""
+                    match = _DESIGNATION_RE.search(d_text)
+                    desig = match.group(0) if match else (d_text if 3 < len(d_text) < 40 else "Architect")
+                    rank = _designation_rank(desig)
+                    snippet = _snippet(card.get_text(separator=" ", strip=True))
+                    seen_names.add(name_clean.lower())
+                    team_members.append((name_clean, desig, rank, snippet))
+
+    # 2. Heading followed by designation in sibling
+    for h in soup.find_all(["h2", "h3", "h4", "h5"]):
+        name_clean = _clean_name(h.get_text(strip=True))
+        if name_clean and name_clean.lower() not in seen_names:
+            sib = h.find_next_sibling(["p", "span", "div", "h4", "h5", "h6"])
+            if sib:
+                sib_text = sib.get_text(strip=True)
+                match = _DESIGNATION_RE.search(sib_text)
+                if match:
+                    desig = match.group(0)
+                    rank = _designation_rank(desig)
+                    snippet = f"{name_clean} — {sib_text}"
+                    seen_names.add(name_clean.lower())
+                    team_members.append((name_clean, desig, rank, snippet))
+
+    # 3. Text patterns: "Name, Designation" or "Name - Designation"
+    text = soup.get_text(separator="\n", strip=True)
+    for line in text.splitlines():
+        line_clean = line.strip()
+        if not line_clean or len(line_clean) > 120:
+            continue
+        m = re.match(r"^([A-Z][A-Za-z. '\-]{2,35})\s*(?:,\s*|\s*[-–—]\s*|\s*\(\s*)([A-Za-z\s/]{3,50})\)?$", line_clean)
+        if m:
+            cand_name = _clean_name(m.group(1))
+            cand_desig = m.group(2).strip()
+            desig_m = _DESIGNATION_RE.search(cand_desig)
+            if cand_name and desig_m and cand_name.lower() not in seen_names:
+                desig = desig_m.group(0)
+                rank = _designation_rank(desig)
+                seen_names.add(cand_name.lower())
+                team_members.append((cand_name, desig, rank, line_clean))
+
+    return team_members
+
+
+def _extract_org_size(soup: BeautifulSoup, source_url: str, team_count: int = 0) -> list[Candidate]:
+    """
+    Extract org size bucket + basis:
+    (a) Regex for stated size ("team of 25", "50+ professionals", "over 100 employees")
+    (b) Fallback to count of team members listed (lower bound)
+    (c) Else "Not found"
+    """
+    text = soup.get_text(separator=" ", strip=True)
+    candidates: list[Candidate] = []
+
+    # 1. Stated size regex
+    for pat in _STATED_SIZE_RES:
+        m = pat.search(text)
+        if m:
+            groups = [g for g in m.groups() if g]
+            if len(groups) == 2:
+                try:
+                    low = int(groups[0])
+                    high = int(groups[1])
+                    n = (low + high) // 2
+                except ValueError:
+                    n = int(groups[0])
+            elif groups:
+                try:
+                    n = int(groups[0])
+                except ValueError:
+                    continue
+            else:
+                continue
+
+            bucket = _to_size_bucket(n)
+            start = max(0, m.start() - 40)
+            end = min(len(text), m.end() + 40)
+            snippet = _snippet(text[start:end])
+
+            candidates.append(Candidate(
+                "org_size", bucket, source_url, snippet, "html_content", "Extracted"
+            ))
+            candidates.append(Candidate(
+                "org_size_basis", "stated", source_url, snippet, "html_content", "Extracted"
+            ))
+            return candidates
+
+    # 2. Fallback to count of team members listed (lower bound)
+    if team_count >= 2:
+        bucket = _to_size_bucket(team_count)
+        snippet = f"Counted {team_count} team members listed on {source_url}"
+        candidates.append(Candidate(
+            "org_size", bucket, source_url, snippet, "html_content", "Extracted"
+        ))
+        candidates.append(Candidate(
+            "org_size_basis", "team_count", source_url, snippet, "html_content", "Extracted"
+        ))
+        return candidates
+
+    # 3. Else "Not found" — never guess
+    candidates.append(Candidate(
+        "org_size", "Not found", source_url, "No stated team size or team list found on public pages",
+        "html_content", "Not found"
+    ))
+    candidates.append(Candidate(
+        "org_size_basis", "not_found", source_url, "No stated team size or team list found on public pages",
+        "html_content", "Not found"
+    ))
     return candidates
 
 
 def _extract_about_page(soup: BeautifulSoup, source_url: str) -> list[Candidate]:
     """
     Look for person names + designations on about/team/leadership pages.
-    Marks everything as Needs review because ownership cannot be confirmed
-    from HTML alone.
+    Chooses the most senior person as owner.
+    Always marks owner/designation as 'Needs review'.
+    Also extracts org_size.
     """
     candidates: list[Candidate] = []
     text = soup.get_text(separator=" ", strip=True)
 
-    # Look for designation keywords — use surrounding text as name candidate
-    for m in _DESIGNATION_RE.finditer(text):
-        designation = m.group(0)
-        start = max(0, m.start() - 80)
-        end = min(len(text), m.end() + 80)
-        context = _snippet(text[start:end])
+    # Scan team members
+    team_members = _extract_team_members(soup, source_url)
 
+    if team_members:
+        # Sort by seniority rank (1 = Founder, 2 = MD/CEO, 3 = Principal, ...)
+        team_members.sort(key=lambda x: x[2])
+        senior = team_members[0]
+        # Most senior person as owner
         candidates.append(Candidate(
-            "designation", designation, source_url, context,
+            "owner_name", senior[0], source_url, senior[3],
             "html_content", "Needs review",
         ))
+        candidates.append(Candidate(
+            "designation", senior[1], source_url, senior[3],
+            "html_content", "Needs review",
+        ))
+    else:
+        # Fallback: scan designation keywords in text
+        for m in _DESIGNATION_RE.finditer(text):
+            designation = m.group(0)
+            start = max(0, m.start() - 80)
+            end = min(len(text), m.end() + 80)
+            context = _snippet(text[start:end])
+            candidates.append(Candidate(
+                "designation", designation, source_url, context,
+                "html_content", "Needs review",
+            ))
+
+    # Org size from this page
+    candidates.extend(_extract_org_size(soup, source_url, team_count=len(team_members)))
 
     return candidates
 
@@ -340,7 +592,7 @@ def _extract_org_name_from_html(soup: BeautifulSoup, source_url: str) -> list[Ca
                     f"<{tag_name}>{text}</{tag_name}>",
                     "html_content",
                 ))
-                break  # only first of each level
+                break
         if candidates:
             break
     return candidates
@@ -367,17 +619,26 @@ _CITY_RE = re.compile(
 )
 
 
-def _extract_city(soup: BeautifulSoup, source_url: str) -> list[Candidate]:
+def _extract_city(soup: BeautifulSoup, source_url: str, market_city: Optional[str] = None) -> list[Candidate]:
     text = soup.get_text(separator=" ", strip=True)
     matches = _CITY_RE.findall(text)
-    if not matches:
-        return []
-    # Most frequent city is likely the business city
-    from collections import Counter
-    city = Counter(m.title() for m in matches).most_common(1)[0][0]
-    idx = text.lower().find(city.lower())
-    snippet = _snippet(text[max(0, idx - 60): idx + len(city) + 60])
-    return [Candidate("city", city, source_url, snippet, "html_content")]
+    if matches:
+        from collections import Counter
+        city = Counter(m.title() for m in matches).most_common(1)[0][0]
+        idx = text.lower().find(city.lower())
+        snippet = _snippet(text[max(0, idx - 60): idx + len(city) + 60])
+        return [Candidate("city", city, source_url, snippet, "html_content", "Extracted")]
+
+    # Fallback to market-city filter labelled "inferred"
+    if market_city and market_city.strip():
+        m_city = market_city.strip().title()
+        return [Candidate(
+            "city", m_city, source_url,
+            f"Inferred from market city filter: {m_city}",
+            "inferred", "Needs review",
+        )]
+
+    return []
 
 
 # ─── Website field ────────────────────────────────────────────────────────────
@@ -544,16 +805,24 @@ def _extract_website(source_url: str) -> Candidate:
 
 # ─── Main extraction entry point ─────────────────────────────────────────────
 
-def extract(html: str, source_url: str, page_role: str = "homepage") -> list[Candidate]:
+# ─── Main extraction entry point ─────────────────────────────────────────────
+
+def extract(
+    html: str,
+    source_url: str,
+    page_role: str = "homepage",
+    market_city: Optional[str] = None,
+) -> list[Candidate]:
     """
     Extract all available business intelligence fields from an HTML page.
 
     Parameters
     ----------
-    html:       Raw HTML string.
-    source_url: The URL the HTML was fetched from.
-    page_role:  One of 'homepage', 'contact', 'about', 'team', 'services',
-                'portfolio' — controls which heuristics are applied.
+    html:        Raw HTML string.
+    source_url:  The URL the HTML was fetched from.
+    page_role:   One of 'homepage', 'contact', 'about', 'team', 'services',
+                 'portfolio' — controls which heuristics are applied.
+    market_city: Optional market city filter for fallback city inference.
 
     Returns
     -------
@@ -584,10 +853,11 @@ def extract(html: str, source_url: str, page_role: str = "homepage") -> list[Can
     # Website
     candidates.append(_extract_website(source_url))
 
-    # City
-    candidates.extend(_extract_city(soup, source_url))
+    # City (JSON-LD addresses take precedence, then HTML text, then market_city fallback)
+    if not any(c.field_name == "city" for c in candidates):
+        candidates.extend(_extract_city(soup, source_url, market_city=market_city))
 
-    # Gallery images (all pages — useful for competitor visual intelligence)
+    # Gallery images (useful for visual intelligence)
     candidates.extend(_extract_gallery_images(soup, source_url))
 
     # Page-role specific extraction
@@ -607,8 +877,9 @@ def extract(html: str, source_url: str, page_role: str = "homepage") -> list[Can
         candidates.extend(_extract_gallery_images(soup, source_url))
 
     else:
-        # Homepage: light contact extraction + services + projects
+        # Homepage: contact extraction + about/team heuristics (for owner/size on homepage) + services + projects + awards
         candidates.extend(_extract_contact_page(soup, source_url))
+        candidates.extend(_extract_about_page(soup, source_url))
         candidates.extend(_extract_services(soup, source_url))
         candidates.extend(_extract_projects(soup, source_url))
         candidates.extend(_extract_awards(soup, source_url))
@@ -628,80 +899,6 @@ def classify_page_role(url: str) -> str:
     for kw in ("portfolio", "projects", "work", "gallery"):
         if kw in path:
             return "portfolio"
-    for kw in ("about", "studio", "firm"):
-        if kw in path:
-            return "about"
-    for kw in ("team", "people", "leadership", "founders", "principal"):
-        if kw in path:
-            return "team"
-    return "homepage"
-
-
-
-# ─── Main extraction entry point ─────────────────────────────────────────────
-
-def extract(html: str, source_url: str, page_role: str = "homepage") -> list[Candidate]:
-    """
-    Extract all available business intelligence fields from an HTML page.
-
-    Parameters
-    ----------
-    html:       Raw HTML string.
-    source_url: The URL the HTML was fetched from.
-    page_role:  One of 'homepage', 'contact', 'about', 'team' — controls
-                which heuristics are applied.
-
-    Returns
-    -------
-    List of Candidate objects. Multiple candidates for the same field are
-    allowed and expected.
-    """
-    try:
-        soup = BeautifulSoup(html, "lxml")
-    except Exception as exc:
-        logger.warning("Failed to parse HTML from %s: %s", source_url, exc)
-        return []
-
-    candidates: list[Candidate] = []
-
-    # JSON-LD (highest confidence for structured data)
-    candidates.extend(_extract_jsonld(soup, source_url))
-
-    # Meta tags
-    candidates.extend(_extract_meta(soup, source_url))
-
-    # Social links (all pages)
-    candidates.extend(_extract_social_links(soup, source_url))
-
-    # Org name from headings (fallback)
-    if not any(c.field_name == "org_name" for c in candidates):
-        candidates.extend(_extract_org_name_from_html(soup, source_url))
-
-    # Website
-    candidates.append(_extract_website(source_url))
-
-    # City
-    candidates.extend(_extract_city(soup, source_url))
-
-    # Page-role specific extraction
-    if page_role in ("contact",):
-        candidates.extend(_extract_contact_page(soup, source_url))
-    elif page_role in ("about", "team", "leadership", "people", "founders"):
-        candidates.extend(_extract_about_page(soup, source_url))
-        candidates.extend(_extract_contact_page(soup, source_url))
-    else:
-        # Homepage: light contact extraction
-        candidates.extend(_extract_contact_page(soup, source_url))
-
-    return candidates
-
-
-def classify_page_role(url: str) -> str:
-    """Infer the page role from the URL path."""
-    path = urllib.parse.urlparse(url).path.lower()
-    for kw in ("contact",):
-        if kw in path:
-            return "contact"
     for kw in ("about", "studio", "firm"):
         if kw in path:
             return "about"
