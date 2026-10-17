@@ -133,6 +133,40 @@ def get_session() -> requests.Session:
     return _session
 
 
+def _has_almost_no_visible_text(html: str, min_chars: int = 150) -> bool:
+    """Return True if the HTML has fewer than min_chars of visible text (e.g. SPA shells)."""
+    try:
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(html, "lxml")
+        for tag in soup(["script", "style", "noscript", "svg"]):
+            tag.decompose()
+        visible = soup.get_text(separator=" ", strip=True)
+        return len(visible) < min_chars
+    except Exception:
+        return False
+
+
+def _fetch_playwright(url: str, timeout_ms: int = 25000) -> Optional[str]:
+    """Fetch and render page HTML using Playwright headless Chromium for SPAs."""
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(user_agent=USER_AGENT)
+            page = context.new_page()
+            page.goto(url, timeout=timeout_ms, wait_until="domcontentloaded")
+            try:
+                page.wait_for_load_state("networkidle", timeout=8000)
+            except Exception:
+                pass
+            content = page.content()
+            browser.close()
+            return content
+    except Exception as exc:
+        logger.warning("Playwright render error for %s: %s", url, exc)
+        return None
+
+
 def fetch(url: str, *, session: Optional[requests.Session] = None, skip_robots: bool = False) -> FetchResult:
     """
     Fetch a URL safely.
@@ -231,6 +265,17 @@ def fetch(url: str, *, session: Optional[requests.Session] = None, skip_robots: 
                 html=None, error_type="http_error",
                 error_detail=f"HTTP {resp.status_code}",
             )
+
+        # Check if static HTML has almost no visible text (e.g. Single-Page Applications)
+        if html and _has_almost_no_visible_text(html, min_chars=150):
+            logger.info("Playwright fallback triggered: static HTML for %s has almost no visible text (<150 chars).", safe_url)
+            rendered_html = _fetch_playwright(resp.url or safe_url)
+            if rendered_html and not _has_almost_no_visible_text(rendered_html, min_chars=150):
+                logger.info("Playwright fallback used for %s: rendered %d characters of HTML.", safe_url, len(rendered_html))
+                html = rendered_html
+            elif rendered_html:
+                logger.info("Playwright fallback used for %s: rendered %d characters of HTML.", safe_url, len(rendered_html))
+                html = rendered_html
 
         return FetchResult(
             url=resp.url, original_url=url,
