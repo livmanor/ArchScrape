@@ -223,3 +223,174 @@ class TestClassifyPageRole:
 
     def test_leadership(self):
         assert classify_page_role("https://example.com/leadership") == "team"
+
+
+# ─── Leads Feature Unit Tests (Task 1 & Task 5) ───────────────────────────────
+
+FIXTURE_TEAM_SENIORITY = """
+<html>
+<body>
+    <div class="team-grid">
+        <div class="member-card">
+            <h3>Ar. Bimal Patel</h3>
+            <span class="role">Founder and Managing Director</span>
+        </div>
+        <div class="member-card">
+            <h3>Rahul Sen</h3>
+            <span class="role">Senior Architect</span>
+        </div>
+        <div class="member-card">
+            <h3>Pooja Sharma</h3>
+            <span class="role">Interior Designer</span>
+        </div>
+    </div>
+</body>
+</html>
+"""
+
+FIXTURE_STATED_ORG_SIZE = """
+<html>
+<body>
+    <div class="about-hero">
+        <p>Founded in 1996, our practice comprises a dedicated team of 25 architects and planners across India.</p>
+    </div>
+</body>
+</html>
+"""
+
+FIXTURE_STATED_LARGE_ORG_SIZE = """
+<html>
+<body>
+    <p>We are a firm of over 100 professionals delivering sustainable infrastructure.</p>
+</body>
+</html>
+"""
+
+FIXTURE_TEAM_LIST_ONLY = """
+<html>
+<body>
+    <div class="team-list">
+        <div class="team-profile"><h4>Aarav Mehta</h4><p>Partner</p></div>
+        <div class="team-profile"><h4>Diya Patel</h4><p>Principal Architect</p></div>
+        <div class="team-profile"><h4>Karan Joshi</h4><p>Project Lead</p></div>
+        <div class="team-profile"><h4>Rhea Nair</h4><p>Associate Architect</p></div>
+    </div>
+</body>
+</html>
+"""
+
+FIXTURE_NO_SIZE_OR_TEAM = """
+<html>
+<body>
+    <h1>Minimal Studio</h1>
+    <p>Creating contemporary architectural spaces.</p>
+</body>
+</html>
+"""
+
+FIXTURE_MAILTO_LINKS = """
+<html>
+<body>
+    <footer>
+        <a href="mailto:contact@designfirm.example?subject=Project%20Inquiry">Email Us</a>
+        <a href="mailto:careers@designfirm.example">Careers</a>
+    </footer>
+</body>
+</html>
+"""
+
+
+class TestOwnerSeniorityExtraction:
+    def test_senior_founder_chosen_as_owner(self):
+        """When multiple team members are listed, the most senior (Founder) is selected as owner_name."""
+        candidates = extract(FIXTURE_TEAM_SENIORITY, "https://firm.example/team", page_role="team")
+        owners = [c for c in candidates if c.field_name == "owner_name"]
+        assert owners, "Should extract owner_name candidate"
+        # Bimal Patel is Founder and MD, senior to Senior Architect Rahul Sen
+        assert "Bimal Patel" in owners[0].value
+        assert owners[0].verification_status == "Needs review"
+
+    def test_senior_designation_matched(self):
+        candidates = extract(FIXTURE_TEAM_SENIORITY, "https://firm.example/team", page_role="team")
+        desigs = [c for c in candidates if c.field_name == "designation"]
+        assert desigs
+        assert any(d.value in ("Founder", "Managing Director") for d in desigs)
+        assert all(d.verification_status == "Needs review" for d in desigs)
+
+
+class TestOrgSizeExtraction:
+    def test_stated_team_of_25_maps_to_bucket(self):
+        """'team of 25 architects' should yield bucket '11-50' with basis 'stated'."""
+        candidates = extract(FIXTURE_STATED_ORG_SIZE, "https://firm.example/about", page_role="about")
+        sizes = [c for c in candidates if c.field_name == "org_size"]
+        bases = [c for c in candidates if c.field_name == "org_size_basis"]
+        assert sizes, "Should extract org_size"
+        assert sizes[0].value == "11-50"
+        assert bases[0].value == "stated"
+
+    def test_stated_over_100_maps_to_bucket(self):
+        """'over 100 professionals' should yield bucket '51-200' with basis 'stated'."""
+        candidates = extract(FIXTURE_STATED_LARGE_ORG_SIZE, "https://firm.example/about", page_role="about")
+        sizes = [c for c in candidates if c.field_name == "org_size"]
+        bases = [c for c in candidates if c.field_name == "org_size_basis"]
+        assert sizes[0].value == "51-200"
+        assert bases[0].value == "stated"
+
+    def test_team_members_count_fallback(self):
+        """When no stated size exists, count of 4 team members yields '1-10' with basis 'team_count'."""
+        candidates = extract(FIXTURE_TEAM_LIST_ONLY, "https://firm.example/team", page_role="team")
+        sizes = [c for c in candidates if c.field_name == "org_size"]
+        bases = [c for c in candidates if c.field_name == "org_size_basis"]
+        assert sizes[0].value == "1-10"
+        assert bases[0].value == "team_count"
+
+    def test_org_size_not_found(self):
+        """When neither stated size nor team list is present, returns 'Not found'."""
+        candidates = extract(FIXTURE_NO_SIZE_OR_TEAM, "https://firm.example/about", page_role="about")
+        sizes = [c for c in candidates if c.field_name == "org_size"]
+        bases = [c for c in candidates if c.field_name == "org_size_basis"]
+        assert sizes[0].value == "Not found"
+        assert bases[0].value == "not_found"
+
+
+class TestCityExtractionLeads:
+    def test_city_fallback_inferred_from_market_filter(self):
+        """When no city is present in HTML/JSON-LD, falls back to market_city labelled 'inferred' and 'Needs review'."""
+        candidates = extract(
+            FIXTURE_NO_SIZE_OR_TEAM,
+            "https://firm.example/",
+            page_role="homepage",
+            market_city="Ahmedabad",
+        )
+        cities = [c for c in candidates if c.field_name == "city"]
+        assert cities, "Should have inferred city candidate"
+        assert cities[0].value == "Ahmedabad"
+        assert cities[0].method == "inferred"
+        assert cities[0].verification_status == "Needs review"
+
+    def test_real_city_takes_precedence_over_market_city(self):
+        """If city is found in page text (e.g. Pune), it takes precedence over market_city filter."""
+        candidates = extract(
+            FIXTURE_JSONLD_ORG,
+            "https://firm.example/",
+            page_role="homepage",
+            market_city="Ahmedabad",
+        )
+        cities = [c for c in candidates if c.field_name == "city"]
+        assert any("Pune" in (c.value or "") for c in cities)
+
+
+class TestBusinessEmailExtraction:
+    def test_extracts_mailto_with_query_params(self):
+        """mailto: hrefs with subject query params must be cleanly parsed to extract the bare email."""
+        candidates = extract(FIXTURE_MAILTO_LINKS, "https://firm.example/contact", page_role="contact")
+        emails = [c.value for c in candidates if c.field_name == "email"]
+        assert "contact@designfirm.example" in emails
+        assert "careers@designfirm.example" in emails
+        assert not any("?" in (e or "") for e in emails)
+
+    def test_rejects_junk_email_extensions(self):
+        html_junk = "<html><body><p>Contact icon.png@2x and logo.svg@somedomain</p></body></html>"
+        candidates = extract(html_junk, "https://firm.example/contact", page_role="contact")
+        emails = [c.value for c in candidates if c.field_name == "email"]
+        assert not any(e.endswith(".png") or e.endswith(".svg") for e in emails)
