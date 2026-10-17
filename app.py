@@ -19,7 +19,9 @@ ROOT = pathlib.Path(__file__).parent
 sys.path.insert(0, str(ROOT))
 
 from database import db
-from services.company_service import run_scrape, export_csv
+from services.company_service import (
+    run_scrape, export_csv, get_leads, export_leads_csv, export_leads_excel
+)
 from scraper.validator import URLValidationError, validate_url, normalise_domain
 from scraper.fetcher import fetch, discover_internal_pages, get_session
 from scraper.extractor import extract, classify_page_role
@@ -211,6 +213,62 @@ section[data-testid="stSidebar"] {
 hr { border-color: rgba(255,255,255,0.06) !important; }
 .stAlert { border-radius: 12px !important; }
 .stDataFrame { border-radius: 12px; overflow: hidden; }
+
+/* ── Lead Badges & Cards ── */
+.badge-extracted {
+    background: rgba(16, 185, 129, 0.15);
+    color: #34d399;
+    border: 1px solid rgba(16, 185, 129, 0.35);
+    border-radius: 6px;
+    padding: 2px 7px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+.badge-review {
+    background: rgba(245, 158, 11, 0.15);
+    color: #fbbf24;
+    border: 1px solid rgba(245, 158, 11, 0.35);
+    border-radius: 6px;
+    padding: 2px 7px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+.badge-notfound {
+    background: rgba(100, 116, 139, 0.12);
+    color: #64748b;
+    border: 1px solid rgba(100, 116, 139, 0.25);
+    border-radius: 6px;
+    padding: 2px 7px;
+    font-size: 0.72rem;
+    font-style: italic;
+}
+.badge-basis {
+    background: rgba(99, 102, 241, 0.15);
+    color: #a5b4fc;
+    border: 1px solid rgba(99, 102, 241, 0.3);
+    border-radius: 6px;
+    padding: 1px 6px;
+    font-size: 0.68rem;
+    margin-left: 4px;
+}
+.lead-card {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 14px;
+    padding: 16px 20px;
+    margin-bottom: 14px;
+    transition: all 0.2s;
+}
+.lead-card:hover {
+    border-color: rgba(99, 102, 241, 0.35);
+    background: rgba(255, 255, 255, 0.045);
+}
 </style>
 """, unsafe_allow_html=True)
 
