@@ -67,6 +67,20 @@ class TestCitySeedDiscovery:
         assert len(firms) >= 5
         assert any("hcp.co.in" in f["url"] for f in firms)
 
+    def test_delhi_seed_companies_count(self):
+        from scraper.finder import get_city_seed_companies
+        firms = get_city_seed_companies("Delhi", limit=50)
+        assert len(firms) == 50, f"Expected 50 Delhi firms, got {len(firms)}"
+        assert any("morphogenesis.org" in f["url"] for f in firms)
+        assert any("studiolotus.in" in f["url"] for f in firms)
+
+    def test_hyderabad_seed_companies_count(self):
+        from scraper.finder import get_city_seed_companies
+        firms = get_city_seed_companies("Hyderabad", limit=50)
+        assert len(firms) == 50, f"Expected 50 Hyderabad firms, got {len(firms)}"
+        assert any("fhdindia.com" in f["url"] for f in firms)
+        assert any("genesisplanners.in" in f["url"] for f in firms)
+
 
 class TestLeadUpdateVerification:
     def test_update_lead_fields_persists(self, tmp_path):

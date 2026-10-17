@@ -74,20 +74,86 @@ def _check_known_csvs(query_norm: str) -> Optional[dict]:
     return None
 
 
+def _discover_firms_online(city: str, count: int = 20) -> list[dict]:
+    """Query open web search to discover architecture firms in any city."""
+    query = f"top architecture firms in {city} official website"
+    search_url = f"https://www.bing.com/search?q={urllib.parse.quote(query)}"
+    firms = []
+    seen = set()
+    try:
+        resp = requests.get(search_url, timeout=6, headers=BROWSER_HEADERS)
+        if resp.status_code == 200:
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(resp.text, "html.parser")
+            for a in soup.select("li.b_algo h2 a"):
+                href = a.get("href", "")
+                target_url = href
+                m = re.search(r"u=(a1[a-zA-Z0-9_\-]+)", href)
+                if m:
+                    b64 = m.group(1)[2:]
+                    b64 += "=" * (-len(b64) % 4)
+                    try:
+                        decoded = base64.urlsafe_b64decode(b64).decode("utf-8", errors="ignore")
+                        target_url = decoded
+                    except Exception:
+                        pass
+
+                skip_domains = [
+                    "bing.com", "microsoft.com", "wikipedia.org", "facebook.com", "instagram.com",
+                    "linkedin.com", "twitter.com", "youtube.com", "justdial.com", "indiamart.com",
+                    "sulekha.com", "quora.com", "tripadvisor.com", "glassdoor.co.in", "ambitionbox.com",
+                    "architecturaldigest.in", "houzz.in", "reddit.com"
+                ]
+                if target_url.startswith("http") and not any(sd in target_url.lower() for sd in skip_domains):
+                    try:
+                        clean_url = validate_url(target_url)
+                        domain = normalise_domain(clean_url)
+                        if domain not in seen:
+                            seen.add(domain)
+                            title = a.get_text(strip=True).split(" - ")[0].split(" | ")[0]
+                            firms.append({
+                                "url": clean_url,
+                                "category": "architecture",
+                                "notes": f"{title} - {city.title()}",
+                                "city": city.title(),
+                            })
+                            if len(firms) >= count:
+                                break
+                    except Exception:
+                        pass
+    except Exception as exc:
+        logger.debug("Online firm discovery error for %s: %s", city, exc)
+    return firms
+
+
 def get_city_seed_companies(city: str, limit: int = 50) -> list[dict]:
     """Retrieve up to limit verified company records for a given city."""
     city_norm = city.strip().lower()
+    city_aliases = [city_norm]
+    if city_norm in ("delhi", "new delhi", "delhi ncr", "ncr"):
+        city_aliases = ["delhi", "new delhi", "delhi ncr"]
+    elif city_norm in ("bengaluru", "bangalore"):
+        city_aliases = ["bengaluru", "bangalore"]
+    elif city_norm in ("bombay", "mumbai"):
+        city_aliases = ["mumbai", "bombay"]
+    elif city_norm in ("hyderabad", "secunderabad"):
+        city_aliases = ["hyderabad", "secunderabad"]
+
     results: list[dict] = []
     seen_urls: set[str] = set()
 
-    # Look for specific city CSV first
-    city_csv = DATA_DIR / f"{city_norm}_architecture_firms.csv"
-    csv_paths = [city_csv] if city_csv.exists() else []
-    csv_paths.extend([
-        DATA_DIR / "chennai_architecture_firms.csv",
-        DATA_DIR / "ahmedabad_architecture_firms.csv",
-        DATA_DIR / "seed_urls.csv",
-    ])
+    # Look for matching city CSVs first
+    csv_paths = []
+    for alias in city_aliases:
+        p = DATA_DIR / f"{alias}_architecture_firms.csv"
+        if p.exists() and p not in csv_paths:
+            csv_paths.append(p)
+
+    # Then check all other firm CSVs
+    for p in sorted(DATA_DIR.glob("*_architecture_firms.csv")):
+        if p not in csv_paths:
+            csv_paths.append(p)
+    csv_paths.append(DATA_DIR / "seed_urls.csv")
 
     for p in csv_paths:
         if not p.exists():
@@ -102,11 +168,11 @@ def get_city_seed_companies(city: str, limit: int = 50) -> list[dict]:
                     if not url or url in seen_urls:
                         continue
 
-                    # If looking for a specific city, filter unless from city-specific file
-                    if p.name.startswith(city_norm):
-                        seen_urls.add(url)
-                        results.append({"url": url, "category": cat, "notes": notes, "city": city.title()})
-                    elif city_norm in notes.lower():
+                    # If this CSV specifically matches the target city alias
+                    is_city_csv = any(p.name.startswith(alias) for alias in city_aliases)
+                    notes_match = any(alias in notes.lower() for alias in city_aliases)
+
+                    if is_city_csv or notes_match:
                         seen_urls.add(url)
                         results.append({"url": url, "category": cat, "notes": notes, "city": city.title()})
 
@@ -114,6 +180,16 @@ def get_city_seed_companies(city: str, limit: int = 50) -> list[dict]:
                         return results
         except Exception as exc:
             logger.debug("Error reading %s: %s", p, exc)
+
+    # If the city had no predefined CSV or needs more firms to reach the requested limit, discover online
+    if len(results) < limit:
+        discovered = _discover_firms_online(city, count=limit - len(results))
+        for d in discovered:
+            if d["url"] not in seen_urls:
+                seen_urls.add(d["url"])
+                results.append(d)
+                if len(results) >= limit:
+                    break
 
     return results[:limit]
 
