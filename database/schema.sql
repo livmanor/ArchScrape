@@ -39,7 +39,6 @@ CREATE TABLE IF NOT EXISTS companies (
 
 CREATE INDEX IF NOT EXISTS idx_companies_domain ON companies(domain_key);
 CREATE INDEX IF NOT EXISTS idx_companies_category ON companies(category);
-CREATE INDEX IF NOT EXISTS idx_companies_city ON companies(city);
 
 -- ─────────────────────────────────────────────
 -- Field-level evidence

@@ -39,6 +39,10 @@ def migrate_db(conn: sqlite3.Connection) -> None:
         if col_name not in existing_cols:
             conn.execute(f"ALTER TABLE companies ADD COLUMN {col_name} {col_type}")
             logger.info("Migrated companies table: added column %s", col_name)
+    try:
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_companies_city ON companies(city)")
+    except Exception:
+        pass
     conn.commit()
 
 
