@@ -78,7 +78,15 @@ class TestValidateURL:
             validate_url("http://127.0.0.1/", resolve_ip=False)
 
     def test_rejects_link_local(self):
-        with pytest.raises(URLValidationError, match="private"):
+        # 169.254.1.1 is a link-local address not in the hostname blocklist,
+        # so it should be caught by the IP range check (message: "private").
+        with pytest.raises(URLValidationError):
+            validate_url("http://169.254.1.1/", resolve_ip=False)
+
+    def test_rejects_metadata_ip_as_blocked_hostname(self):
+        # 169.254.169.254 is in the explicit hostname blocklist (AWS metadata).
+        # It's blocked before IP-range check, message says "Blocked hostname".
+        with pytest.raises(URLValidationError, match="[Bb]locked"):
             validate_url("http://169.254.169.254/latest/meta-data/", resolve_ip=False)
 
     def test_url_too_long(self):

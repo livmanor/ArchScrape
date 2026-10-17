@@ -19,24 +19,24 @@ from scraper.extractor import (
 FIXTURE_JSONLD_ORG = """
 <html>
 <head>
-    <title>Test Architecture Studio — Fictional</title>
+    <title>Test Architecture Studio &#8212; Fictional</title>
     <script type="application/ld+json">
-    {{
+    {
         "@context": "https://schema.org",
         "@type": "Organization",
         "name": "Test Architecture Studio",
         "telephone": "+91-9999900000",
         "email": "info@test-arch-studio.example",
         "url": "https://test-arch-studio.example",
-        "address": {{
+        "address": {
             "@type": "PostalAddress",
             "addressLocality": "Pune",
             "addressRegion": "Maharashtra"
-        }},
+        },
         "sameAs": [
             "https://www.linkedin.com/company/test-arch-studio"
         ]
-    }}
+    }
     </script>
 </head>
 <body><h1>Test Architecture Studio</h1></body>
@@ -47,12 +47,12 @@ FIXTURE_JSONLD_PERSON = """
 <html>
 <head>
     <script type="application/ld+json">
-    {{
+    {
         "@context": "https://schema.org",
         "@type": "Person",
         "name": "Jane Test Architect",
         "jobTitle": "Principal Architect"
-    }}
+    }
     </script>
 </head>
 <body></body>
