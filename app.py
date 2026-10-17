@@ -1,68 +1,34 @@
 """
 app.py — ArchScale Intelligence Platform
-Streamlit dashboard for company research and web scraping.
+CEO-facing Competitor Intelligence Dashboard for Indian Architecture & Interior Design Firms.
 
-Run with:   streamlit run app.py
+Run with:   py -m streamlit run app.py
 """
 
+import datetime
 import logging
 import pathlib
 import sys
-import threading
 import time
 from typing import Optional
 
 import pandas as pd
 import streamlit as st
 
-# ── Path setup ────────────────────────────────────────────────────────────────
 ROOT = pathlib.Path(__file__).parent
 sys.path.insert(0, str(ROOT))
 
 from database import db
 from services.company_service import run_scrape, export_csv
+from scraper.validator import URLValidationError, validate_url, normalise_domain
+from scraper.fetcher import fetch, discover_internal_pages, get_session
+from scraper.extractor import extract, classify_page_role
 
-# ── Logging ───────────────────────────────────────────────────────────────────
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-8s %(name)s %(message)s")
 logger = logging.getLogger(__name__)
 
-# ── Constants ─────────────────────────────────────────────────────────────────
-DB_PATH = ROOT / "data" / "archscale.db"
+DB_PATH  = ROOT / "data" / "archscale.db"
 SEED_CSV = ROOT / "data" / "seed_urls.csv"
-
-VERIFICATION_COLORS = {
-    "Extracted": "#3b82f6",
-    "Source checked": "#8b5cf6",
-    "Cross-verified": "#10b981",
-    "Not found": "#6b7280",
-    "Needs review": "#f59e0b",
-}
-
-FIELD_LABELS = {
-    "org_name": "Organisation",
-    "owner_name": "Owner / Founder",
-    "designation": "Designation",
-    "org_size": "Org Size",
-    "phone": "Phone",
-    "email": "Email",
-    "city": "City",
-    "website": "Website",
-    "linkedin": "LinkedIn",
-    "instagram": "Instagram",
-    "facebook": "Facebook",
-    "twitter": "Twitter",
-    "youtube": "YouTube",
-    "houzz": "Houzz",
-    "behance": "Behance",
-    "address": "Address",
-    "description": "Description",
-    "page_title": "Page Title",
-    "fetch_status": "Fetch Status",
-}
-
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -72,815 +38,969 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ── Custom CSS ────────────────────────────────────────────────────────────────
+# ── Global CSS ────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap');
 
-/* ── Global ── */
-html, body, [class*="css"] {
-    font-family: 'Inter', sans-serif;
-}
+html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+
 .stApp {
-    background: linear-gradient(135deg, #0f0c29 0%, #141d30 50%, #0a1628 100%);
+    background: linear-gradient(135deg, #0a0e1a 0%, #0d1525 55%, #080d18 100%);
     min-height: 100vh;
 }
 
 /* ── Header ── */
 .arch-header {
-    background: linear-gradient(135deg, rgba(99,102,241,0.15) 0%, rgba(16,185,129,0.10) 100%);
-    border: 1px solid rgba(99,102,241,0.3);
-    border-radius: 16px;
-    padding: 28px 32px;
-    margin-bottom: 24px;
-    backdrop-filter: blur(12px);
+    background: linear-gradient(135deg, rgba(99,102,241,0.12) 0%, rgba(16,185,129,0.08) 100%);
+    border: 1px solid rgba(99,102,241,0.25);
+    border-radius: 20px;
+    padding: 32px 36px;
+    margin-bottom: 28px;
+    position: relative;
+    overflow: hidden;
+}
+.arch-header::before {
+    content: '';
+    position: absolute;
+    top: -50%; left: -50%;
+    width: 200%; height: 200%;
+    background: radial-gradient(circle at 30% 50%, rgba(99,102,241,0.06) 0%, transparent 60%);
+    pointer-events: none;
 }
 .arch-header h1 {
     font-family: 'Space Grotesk', sans-serif;
-    font-size: 2rem;
-    font-weight: 700;
+    font-size: 2.2rem; font-weight: 700;
     background: linear-gradient(135deg, #a5b4fc 0%, #34d399 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
     margin: 0;
 }
-.arch-header p {
-    color: #94a3b8;
-    margin: 6px 0 0;
-    font-size: 0.95rem;
-}
+.arch-header .subtitle { color: #64748b; font-size: 0.95rem; margin-top: 6px; }
 
-/* ── Metric cards ── */
-.metric-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-    gap: 16px;
-    margin-bottom: 28px;
+/* ── Input card ── */
+.input-card {
+    background: rgba(255,255,255,0.035);
+    border: 1px solid rgba(99,102,241,0.2);
+    border-radius: 16px;
+    padding: 28px 32px;
+    margin-bottom: 24px;
 }
-.metric-card {
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 12px;
-    padding: 20px 22px;
-    text-align: center;
-    transition: transform 0.2s, border-color 0.2s;
-}
-.metric-card:hover { transform: translateY(-2px); border-color: rgba(99,102,241,0.4); }
-.metric-number {
+.input-card-title {
     font-family: 'Space Grotesk', sans-serif;
-    font-size: 2rem;
-    font-weight: 700;
-    color: #a5b4fc;
-    line-height: 1;
-}
-.metric-label {
-    font-size: 0.78rem;
-    color: #64748b;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin-top: 6px;
+    font-size: 1.05rem; font-weight: 600;
+    color: #a5b4fc; margin-bottom: 16px;
+    display: flex; align-items: center; gap: 8px;
 }
 
-/* ── Status badges ── */
-.badge {
-    display: inline-block;
-    padding: 2px 10px;
-    border-radius: 999px;
-    font-size: 0.72rem;
-    font-weight: 600;
-    letter-spacing: 0.03em;
-}
-.badge-extracted    { background: rgba(59,130,246,0.18); color: #60a5fa; }
-.badge-checked      { background: rgba(139,92,246,0.18); color: #c084fc; }
-.badge-verified     { background: rgba(16,185,129,0.18); color: #34d399; }
-.badge-notfound     { background: rgba(107,114,128,0.18); color: #9ca3af; }
-.badge-review       { background: rgba(245,158,11,0.18); color: #fbbf24; }
-
-/* ── Company card ── */
-.company-card {
+/* ── Company Intelligence Card ── */
+.intel-card {
     background: rgba(255,255,255,0.03);
     border: 1px solid rgba(255,255,255,0.07);
-    border-radius: 12px;
-    padding: 20px 24px;
-    margin-bottom: 12px;
-    transition: all 0.2s;
-    cursor: pointer;
+    border-radius: 16px;
+    padding: 24px 28px;
+    margin-bottom: 20px;
+    transition: all 0.25s;
 }
-.company-card:hover {
-    background: rgba(99,102,241,0.08);
+.intel-card:hover {
     border-color: rgba(99,102,241,0.35);
+    background: rgba(99,102,241,0.06);
+    transform: translateY(-1px);
 }
-.company-name {
+.intel-card-header {
+    display: flex; justify-content: space-between; align-items: flex-start;
+    margin-bottom: 16px;
+}
+.company-name-big {
     font-family: 'Space Grotesk', sans-serif;
-    font-size: 1.05rem;
-    font-weight: 600;
-    color: #e2e8f0;
-    margin-bottom: 4px;
+    font-size: 1.35rem; font-weight: 700; color: #e2e8f0;
 }
-.company-meta {
-    font-size: 0.82rem;
-    color: #64748b;
+.company-domain-tag {
+    font-size: 0.8rem; color: #818cf8; font-weight: 500;
+    background: rgba(99,102,241,0.12); padding: 3px 10px; border-radius: 999px;
 }
-.company-domain { color: #818cf8; font-weight: 500; }
+.intel-section-label {
+    font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.08em; color: #475569; margin: 14px 0 8px;
+}
+.service-tag {
+    display: inline-block;
+    background: rgba(16,185,129,0.1); border: 1px solid rgba(16,185,129,0.2);
+    color: #34d399; padding: 3px 12px; border-radius: 999px;
+    font-size: 0.8rem; font-weight: 500; margin: 3px;
+}
+.project-tag {
+    display: inline-block;
+    background: rgba(139,92,246,0.1); border: 1px solid rgba(139,92,246,0.2);
+    color: #c084fc; padding: 3px 12px; border-radius: 999px;
+    font-size: 0.8rem; font-weight: 500; margin: 3px;
+}
+.social-link {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
+    color: #94a3b8; padding: 5px 14px; border-radius: 8px; margin: 3px;
+    text-decoration: none; font-size: 0.82rem; font-weight: 500;
+    transition: all 0.2s;
+}
+.social-link:hover { background: rgba(99,102,241,0.15); color: #a5b4fc; }
+.contact-item { font-size: 0.85rem; color: #94a3b8; margin: 4px 0; }
+.contact-item a { color: #818cf8; }
+.city-badge {
+    font-size: 0.78rem; font-weight: 600;
+    background: rgba(245,158,11,0.12); color: #fbbf24;
+    padding: 2px 10px; border-radius: 999px;
+}
+.not-found { color: #374151; font-style: italic; font-size: 0.82rem; }
 
-/* ── Evidence panel ── */
-.evidence-row {
-    background: rgba(255,255,255,0.025);
-    border-left: 3px solid rgba(99,102,241,0.4);
-    border-radius: 0 8px 8px 0;
-    padding: 12px 16px;
-    margin-bottom: 8px;
+/* ── Gallery grid ── */
+.gallery-grid { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+.gallery-img {
+    width: 110px; height: 75px;
+    object-fit: cover; border-radius: 8px;
+    border: 1px solid rgba(255,255,255,0.08);
+    transition: transform 0.2s;
 }
-.evidence-field { font-size: 0.78rem; font-weight: 600; color: #818cf8; text-transform: uppercase; letter-spacing: 0.05em; }
-.evidence-value { font-size: 0.92rem; color: #e2e8f0; margin: 4px 0; word-break: break-word; }
-.evidence-source { font-size: 0.75rem; color: #475569; }
+.gallery-img:hover { transform: scale(1.05); }
+
+/* ── Metric pills ── */
+.metric-pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
+    padding: 8px 16px; border-radius: 10px; font-size: 0.85rem;
+    color: #94a3b8;
+}
+.metric-pill strong { color: #a5b4fc; }
 
 /* ── Sidebar ── */
 section[data-testid="stSidebar"] {
-    background: rgba(15,12,41,0.95) !important;
-    border-right: 1px solid rgba(99,102,241,0.2);
+    background: rgba(8,13,24,0.98) !important;
+    border-right: 1px solid rgba(99,102,241,0.15);
+}
+
+/* ── Inputs ── */
+.stTextInput > div > input, .stTextArea textarea, .stSelectbox > div {
+    background: rgba(255,255,255,0.05) !important;
+    border: 1px solid rgba(255,255,255,0.12) !important;
+    border-radius: 10px !important; color: #e2e8f0 !important;
+}
+.stTextInput > div > input:focus {
+    border-color: rgba(99,102,241,0.6) !important;
+    box-shadow: 0 0 0 3px rgba(99,102,241,0.15) !important;
 }
 
 /* ── Buttons ── */
 .stButton > button {
     background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%) !important;
-    color: white !important;
-    border: none !important;
-    border-radius: 8px !important;
-    font-weight: 600 !important;
-    letter-spacing: 0.02em !important;
+    color: white !important; border: none !important;
+    border-radius: 10px !important; font-weight: 600 !important;
+    letter-spacing: 0.02em !important; padding: 10px 24px !important;
     transition: all 0.2s !important;
 }
 .stButton > button:hover {
     transform: translateY(-1px) !important;
-    box-shadow: 0 4px 20px rgba(99,102,241,0.4) !important;
+    box-shadow: 0 6px 24px rgba(99,102,241,0.45) !important;
 }
-
-/* ── Dataframe ── */
-.stDataFrame { border-radius: 10px; overflow: hidden; }
-
-/* ── Search / filter inputs ── */
-.stTextInput > div > input, .stSelectbox > div {
+.stButton > button[kind="secondary"] {
     background: rgba(255,255,255,0.06) !important;
-    border: 1px solid rgba(255,255,255,0.12) !important;
-    border-radius: 8px !important;
-    color: #e2e8f0 !important;
+    color: #94a3b8 !important;
+    box-shadow: none !important;
 }
 
-/* ── Info / warning banners ── */
-.stAlert { border-radius: 10px; }
+/* ── Progress ── */
+.stProgress > div > div { background: linear-gradient(90deg, #6366f1, #34d399) !important; }
 
-/* ── Divider ── */
-hr { border-color: rgba(255,255,255,0.08) !important; }
+hr { border-color: rgba(255,255,255,0.06) !important; }
+.stAlert { border-radius: 12px !important; }
+.stDataFrame { border-radius: 12px; overflow: hidden; }
 </style>
 """, unsafe_allow_html=True)
 
 
-# ── Session state defaults ────────────────────────────────────────────────────
-if "scrape_running" not in st.session_state:
-    st.session_state.scrape_running = False
-if "scrape_log" not in st.session_state:
-    st.session_state.scrape_log = []
-if "scrape_result" not in st.session_state:
-    st.session_state.scrape_result = None
-if "selected_company_id" not in st.session_state:
-    st.session_state.selected_company_id = None
-if "active_tab" not in st.session_state:
-    st.session_state.active_tab = "dashboard"
+# ── Session state ─────────────────────────────────────────────────────────────
+for k, v in {
+    "intel_results": [],
+    "intel_running": False,
+    "scrape_log": [],
+    "active_intel_idx": None,
+}.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
 
-
-# ── DB initialisation ─────────────────────────────────────────────────────────
+# ── DB init ───────────────────────────────────────────────────────────────────
 try:
     db.init_db(DB_PATH)
 except Exception as exc:
-    st.error(f"❌ Failed to initialise database: {exc}")
+    st.error(f"❌ Database error: {exc}")
     st.stop()
 
 
-# ── Helper functions ──────────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
-def badge_html(status: str) -> str:
-    cls_map = {
-        "Extracted": "badge-extracted",
-        "Source checked": "badge-checked",
-        "Cross-verified": "badge-verified",
-        "Not found": "badge-notfound",
-        "Needs review": "badge-review",
-    }
-    cls = cls_map.get(status, "badge-notfound")
-    return f'<span class="badge {cls}">{status}</span>'
+def _now() -> str:
+    return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
 
-def icon_for_field(field: str) -> str:
+def _get_primary(evidence_rows, field: str) -> Optional[str]:
+    for e in evidence_rows:
+        if e["field_name"] == field and e["is_primary"] == 1 and e["extracted_value"]:
+            return e["extracted_value"]
+    return None
+
+
+def _get_all(evidence_rows, field: str) -> list[str]:
+    return [e["extracted_value"] for e in evidence_rows
+            if e["field_name"] == field and e["extracted_value"]]
+
+
+def _social_icon(platform: str) -> str:
     icons = {
-        "org_name": "🏢", "owner_name": "👤", "designation": "🎖️",
-        "org_size": "👥", "phone": "📞", "email": "✉️", "city": "📍",
-        "website": "🌐", "linkedin": "💼", "instagram": "📸",
-        "facebook": "👍", "twitter": "🐦", "address": "🗺️",
-        "description": "📝", "page_title": "🏷️", "fetch_status": "⚠️",
-        "youtube": "▶️", "houzz": "🏠", "behance": "🎨",
+        "linkedin": "💼", "instagram": "📸", "facebook": "👍",
+        "twitter": "🐦", "youtube": "▶️", "houzz": "🏠", "behance": "🎨",
     }
-    return icons.get(field, "📌")
+    return icons.get(platform, "🔗")
 
 
-def display_value(field: str, value: Optional[str]) -> str:
-    if not value:
-        return "<em style='color:#4b5563'>Not found</em>"
-    if field in ("website", "linkedin", "instagram", "facebook", "twitter",
-                 "youtube", "houzz", "behance"):
-        return f'<a href="{value}" target="_blank" style="color:#818cf8">{value}</a>'
-    if field == "email":
-        return f'<a href="mailto:{value}" style="color:#818cf8">{value}</a>'
-    if field == "phone":
-        return f'<a href="tel:{value}" style="color:#818cf8">{value}</a>'
-    return f"<span style='color:#e2e8f0'>{value}</span>"
+def _scrape_single_url(url: str, category: str = "architecture") -> dict:
+    """
+    Scrape a single URL and return a structured intelligence dict.
+    Does NOT write to the database — used for live competitor analysis.
+    """
+    session = get_session()
+    result = fetch(url, session=session)
+
+    intel = {
+        "url": url,
+        "final_url": url,
+        "domain": normalise_domain(url),
+        "category": category,
+        "ok": False,
+        "error": None,
+        "org_name": None,
+        "city": None,
+        "phone": [],
+        "email": [],
+        "website": None,
+        "description": None,
+        "services": [],
+        "projects": [],
+        "gallery": [],
+        "awards": [],
+        "social": {},
+        "pages_scraped": [],
+        "scraped_at": _now(),
+    }
+
+    if not result.ok:
+        intel["error"] = f"{result.error_type}: {result.error_detail}"
+        return intel
+
+    intel["ok"] = True
+    intel["final_url"] = result.url
+
+    # Extract from homepage
+    role = classify_page_role(result.url)
+    candidates = extract(result.html, result.url, role)
+    intel["pages_scraped"].append(result.url)
+
+    # Discover sub-pages
+    sub_urls = discover_internal_pages(result.url, result.html, session=session)
+    for sub_url in sub_urls[:8]:
+        sub = fetch(sub_url, session=session)
+        if sub.ok:
+            sub_role = classify_page_role(sub.url)
+            candidates.extend(extract(sub.html, sub.url, sub_role))
+            intel["pages_scraped"].append(sub.url)
+
+    # Build structured intel from candidates
+    for c in candidates:
+        fn = c.field_name
+        val = c.value
+        if not val:
+            continue
+        if fn == "org_name" and not intel["org_name"]:
+            intel["org_name"] = val
+        elif fn == "city" and not intel["city"]:
+            intel["city"] = val
+        elif fn == "description" and not intel["description"]:
+            intel["description"] = val
+        elif fn == "website" and not intel["website"]:
+            intel["website"] = val
+        elif fn == "phone" and val not in intel["phone"]:
+            intel["phone"].append(val)
+        elif fn == "email" and val not in intel["email"]:
+            intel["email"].append(val)
+        elif fn == "service" and val not in intel["services"]:
+            intel["services"].append(val)
+        elif fn == "project" and val not in intel["projects"]:
+            intel["projects"].append(val)
+        elif fn == "gallery_image" and val not in intel["gallery"]:
+            intel["gallery"].append(val)
+        elif fn == "award" and val not in intel["awards"]:
+            intel["awards"].append(val)
+        elif fn in ("linkedin", "instagram", "facebook", "twitter",
+                    "youtube", "houzz", "behance"):
+            if fn not in intel["social"]:
+                intel["social"][fn] = val
+
+    intel["org_name"] = intel["org_name"] or intel["domain"]
+    return intel
 
 
-def get_metrics():
-    try:
-        with db.get_connection(DB_PATH) as conn:
-            return db.get_summary_metrics(conn)
-    except Exception:
-        return {}
+def _save_intel_to_db(intel: dict) -> None:
+    """Persist a live intel result to the database for future reference."""
+    now = _now()
+    with db.get_connection(DB_PATH) as conn:
+        run_id = db.start_scrape_run(conn, now)
+        company_id = db.upsert_company(
+            conn, intel["domain"], intel["url"],
+            intel["category"], now, run_id,
+        )
+        field_map = {
+            "org_name": intel.get("org_name"),
+            "city": intel.get("city"),
+            "website": intel.get("website"),
+            "description": intel.get("description"),
+        }
+        for field, val in field_map.items():
+            if val:
+                db.upsert_evidence(conn, company_id, field, val, intel["url"],
+                                   None, "structured", now)
+        for ph in intel.get("phone", []):
+            db.upsert_evidence(conn, company_id, "phone", ph, intel["url"],
+                               None, "html_content", now)
+        for em in intel.get("email", []):
+            db.upsert_evidence(conn, company_id, "email", em, intel["url"],
+                               None, "html_content", now)
+        for svc in intel.get("services", []):
+            db.upsert_evidence(conn, company_id, "service", svc, intel["url"],
+                               None, "html_content", now)
+        for proj in intel.get("projects", []):
+            db.upsert_evidence(conn, company_id, "project", proj, intel["url"],
+                               None, "html_content", now)
+        for platform, link in intel.get("social", {}).items():
+            db.upsert_evidence(conn, company_id, platform, link, intel["url"],
+                               None, "html_content", now)
+        db.finish_scrape_run(conn, run_id, _now(), 1, 1 if intel["ok"] else 0,
+                             0 if intel["ok"] else 1)
+        conn.commit()
 
 
-def get_companies(search="", category="", city="", status=""):
-    try:
-        with db.get_connection(DB_PATH) as conn:
-            return db.list_companies(conn, search=search, category=category, city=city, status=status)
-    except Exception as exc:
-        st.error(f"Database error: {exc}")
-        return []
-
-
-def get_evidence(company_id: int):
-    try:
-        with db.get_connection(DB_PATH) as conn:
-            return db.get_evidence_for_company(conn, company_id)
-    except Exception as exc:
-        st.error(f"Database error: {exc}")
-        return []
-
-
-# ── Sidebar ───────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# SIDEBAR
+# ─────────────────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("""
-    <div style='text-align:center; padding: 12px 0 20px'>
-        <div style='font-size:2.5rem'>🏛️</div>
-        <div style='font-family: Space Grotesk, sans-serif; font-weight:700;
-             font-size:1.1rem; color:#a5b4fc'>ArchScale Intel</div>
-        <div style='font-size:0.75rem; color:#475569'>Company Research Platform</div>
+    <div style='text-align:center;padding:16px 0 20px'>
+        <div style='font-size:2.8rem'>🏛️</div>
+        <div style='font-family:Space Grotesk,sans-serif;font-weight:700;
+             font-size:1.15rem;color:#a5b4fc;margin-top:4px'>ArchScale Intel</div>
+        <div style='font-size:0.72rem;color:#334155;margin-top:2px'>
+        Competitor Intelligence Platform</div>
     </div>
     """, unsafe_allow_html=True)
 
     st.markdown("---")
-
-    nav_choice = st.radio(
+    nav = st.radio(
         "Navigation",
-        ["📊 Dashboard", "🔍 Browse Companies", "🔬 Evidence Inspector", "⚙️ Scrape Control"],
+        ["🎯 Competitor Analyser", "📊 Dashboard", "🔍 Saved Companies", "🔬 Evidence", "⚙️ Bulk Scrape"],
         label_visibility="collapsed",
     )
 
     st.markdown("---")
 
-    # Quick stats in sidebar
-    metrics = get_metrics()
-    st.markdown(f"""
-    <div style='font-size:0.78rem; color:#475569; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:10px'>
-    Quick Stats
-    </div>
-    <div style='display:flex; flex-direction:column; gap:8px'>
-        <div style='display:flex; justify-content:space-between; font-size:0.85rem'>
-            <span style='color:#64748b'>Companies</span>
-            <span style='color:#a5b4fc; font-weight:600'>{metrics.get("total_companies", 0)}</span>
+    # Quick metrics
+    try:
+        with db.get_connection(DB_PATH) as conn:
+            m = db.get_summary_metrics(conn)
+        st.markdown(f"""
+        <div style='font-size:0.72rem;color:#334155;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:10px'>Saved Database</div>
+        <div style='display:flex;flex-direction:column;gap:6px'>
+            <div style='display:flex;justify-content:space-between;font-size:0.83rem'>
+                <span style='color:#475569'>Companies</span>
+                <span style='color:#a5b4fc;font-weight:600'>{m.get("total_companies",0)}</span>
+            </div>
+            <div style='display:flex;justify-content:space-between;font-size:0.83rem'>
+                <span style='color:#fbbf24'>Needs review</span>
+                <span style='color:#fbbf24;font-weight:600'>{m.get("needs_review",0)}</span>
+            </div>
         </div>
-        <div style='display:flex; justify-content:space-between; font-size:0.85rem'>
-            <span style='color:#64748b'>Evidence rows</span>
-            <span style='color:#a5b4fc; font-weight:600'>{metrics.get("total_evidence", 0)}</span>
-        </div>
-        <div style='display:flex; justify-content:space-between; font-size:0.85rem'>
-            <span style='color:#fbbf24'>Needs review</span>
-            <span style='color:#fbbf24; font-weight:600'>{metrics.get("needs_review", 0)}</span>
-        </div>
-        <div style='display:flex; justify-content:space-between; font-size:0.85rem'>
-            <span style='color:#9ca3af'>Not found</span>
-            <span style='color:#9ca3af; font-weight:600'>{metrics.get("not_found", 0)}</span>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+        """, unsafe_allow_html=True)
+    except Exception:
+        pass
 
     st.markdown("---")
     st.markdown(
-        "<div style='font-size:0.7rem; color:#334155; text-align:center'>"
-        "All data sourced from publicly available pages. "
-        "No records are fabricated or inferred."
-        "</div>",
-        unsafe_allow_html=True,
+        "<div style='font-size:0.68rem;color:#1e293b;text-align:center;line-height:1.5'>"
+        "Data sourced from public web pages only. "
+        "robots.txt compliance enforced. No data is fabricated."
+        "</div>", unsafe_allow_html=True,
     )
 
 
-# ── Header ────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# HEADER
+# ─────────────────────────────────────────────────────────────────────────────
 st.markdown("""
 <div class="arch-header">
-    <h1>🏛️ ArchScale Intelligence Platform</h1>
-    <p>Company research & web intelligence for Indian architecture and interior design firms</p>
+    <h1>🏛️ ArchScale Intelligence</h1>
+    <div class="subtitle">
+        CEO-facing competitor intelligence for Indian architecture & interior design firms —
+        enter any company's website to instantly analyse their services, portfolio, social presence, and contact details.
+    </div>
 </div>
 """, unsafe_allow_html=True)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# PAGE: Competitor Analyser (PRIMARY)
+# ═══════════════════════════════════════════════════════════════════════════════
+if nav == "🎯 Competitor Analyser":
+
+    # ── Input Panel ──────────────────────────────────────────────────────────
+    st.markdown('<div class="input-card">', unsafe_allow_html=True)
+    st.markdown('<div class="input-card-title">🎯 Analyse a Competitor</div>', unsafe_allow_html=True)
+
+    col_url, col_city, col_cat = st.columns([3, 1.5, 1.5])
+    with col_url:
+        raw_urls = st.text_area(
+            "Competitor Website URLs",
+            placeholder="https://www.competitor1.com\nhttps://www.competitor2.com\n(one URL per line)",
+            height=100,
+            help="Paste one or more competitor website URLs. The scraper will extract their services, portfolio, social links, and contact info.",
+            key="intel_urls_input",
+        )
+    with col_city:
+        city_hint = st.text_input(
+            "Your Market City",
+            placeholder="e.g. Ahmedabad",
+            key="intel_city",
+            help="Used to filter companies in your market. Not mandatory for scraping.",
+        )
+        category = st.selectbox(
+            "Company Type",
+            ["architecture", "interior", "other"],
+            key="intel_category",
+        )
+    with col_cat:
+        st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+        analyse_btn = st.button("🚀 Analyse Now", type="primary", use_container_width=True)
+        clear_btn   = st.button("🗑️ Clear Results", use_container_width=True)
+        save_btn    = st.button("💾 Save to Database", use_container_width=True,
+                                help="Persist current results to the local database for future reference.")
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # ── Clear ─────────────────────────────────────────────────────────────────
+    if clear_btn:
+        st.session_state.intel_results = []
+        st.session_state.scrape_log = []
+        st.rerun()
+
+    # ── Save to DB ────────────────────────────────────────────────────────────
+    if save_btn and st.session_state.intel_results:
+        saved = 0
+        for intel in st.session_state.intel_results:
+            if intel.get("ok"):
+                try:
+                    _save_intel_to_db(intel)
+                    saved += 1
+                except Exception as exc:
+                    st.warning(f"Could not save {intel['domain']}: {exc}")
+        st.success(f"✅ Saved {saved} company/companies to the local database.")
+
+    # ── Analyse ───────────────────────────────────────────────────────────────
+    if analyse_btn:
+        urls_raw = [u.strip() for u in (raw_urls or "").splitlines() if u.strip()]
+        if not urls_raw:
+            st.warning("Please enter at least one URL.")
+        else:
+            # Validate URLs first
+            valid_urls = []
+            for u in urls_raw:
+                try:
+                    clean = validate_url(u, resolve_ip=False)
+                    valid_urls.append(clean)
+                except URLValidationError as e:
+                    st.error(f"❌ Invalid URL `{u}`: {e}")
+
+            if valid_urls:
+                st.session_state.intel_results = []
+                progress = st.progress(0)
+                log_box  = st.empty()
+                log_lines: list[str] = []
+
+                def log(msg: str):
+                    log_lines.append(msg)
+                    log_box.markdown(
+                        f"<div style='background:rgba(0,0,0,0.3);border-radius:8px;padding:12px;"
+                        f"font-family:monospace;font-size:0.78rem;color:#64748b;max-height:160px;overflow-y:auto'>"
+                        + "<br>".join(log_lines[-10:]) +
+                        "</div>", unsafe_allow_html=True
+                    )
+
+                for i, url in enumerate(valid_urls):
+                    log(f"🔍 [{i+1}/{len(valid_urls)}] Scraping {url} …")
+                    progress.progress((i) / len(valid_urls))
+
+                    try:
+                        intel = _scrape_single_url(url, category)
+                        intel["market_city"] = city_hint
+                        st.session_state.intel_results.append(intel)
+                        pages = len(intel.get("pages_scraped", []))
+                        svc_count = len(intel.get("services", []))
+                        social_count = len(intel.get("social", {}))
+                        if intel["ok"]:
+                            log(f"   ✅ {intel['org_name']} — {pages} page(s), {svc_count} service(s), {social_count} social link(s)")
+                        else:
+                            log(f"   ❌ {url} — {intel.get('error','failed')}")
+                    except Exception as exc:
+                        log(f"   ❌ Exception on {url}: {exc}")
+                        logger.exception("Intel scrape failed for %s", url)
+
+                progress.progress(100)
+                st.session_state.scrape_log = log_lines
+                log("✅ Analysis complete!")
+                time.sleep(0.5)
+                log_box.empty()
+                st.rerun()
+
+    # ── Results ───────────────────────────────────────────────────────────────
+    results = st.session_state.intel_results
+    if not results:
+        st.markdown("""
+        <div style='text-align:center;padding:60px 20px;color:#1e293b'>
+            <div style='font-size:4rem'>🎯</div>
+            <div style='font-family:Space Grotesk,sans-serif;font-size:1.2rem;color:#334155;margin-top:12px;font-weight:600'>
+            Enter a competitor URL above to begin analysis</div>
+            <div style='font-size:0.88rem;color:#1e293b;margin-top:8px'>
+            The system will extract their services, portfolio, social links, team information, and contact details from publicly available pages.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        # Summary bar
+        ok_count = sum(1 for r in results if r["ok"])
+        city_filter_active = bool(city_hint)
+        st.markdown(
+            f'<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px">'
+            f'<div class="metric-pill">✅ <strong>{ok_count}</strong> analysed</div>'
+            f'<div class="metric-pill">📋 <strong>{len(results)}</strong> requested</div>'
+            f'{"<div class=\"metric-pill\">📍 Market: <strong>" + city_hint + "</strong></div>" if city_filter_active else ""}'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+        for idx, intel in enumerate(results):
+            domain = intel["domain"]
+            org = intel.get("org_name") or domain
+            city = intel.get("city") or intel.get("market_city") or "—"
+            website = intel.get("website") or intel.get("final_url") or intel.get("url")
+            desc = intel.get("description") or ""
+            phones = intel.get("phone", [])
+            emails = intel.get("email", [])
+            services = intel.get("services", [])
+            projects = intel.get("projects", [])
+            gallery  = intel.get("gallery", [])
+            awards   = intel.get("awards", [])
+            social   = intel.get("social", {})
+            pages_scraped = intel.get("pages_scraped", [])
+
+            if not intel.get("ok"):
+                st.markdown(f"""
+                <div class="intel-card" style="border-color:rgba(239,68,68,0.25)">
+                    <div class="intel-card-header">
+                        <div>
+                            <div class="company-name-big" style="color:#f87171">❌ {domain}</div>
+                            <div style="font-size:0.82rem;color:#ef4444;margin-top:4px">{intel.get("error","Fetch failed")}</div>
+                        </div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+                continue
+
+            # ─── Company Card ─────────────────────────────────────────────
+            with st.container():
+                st.markdown(f"""
+                <div class="intel-card" id="company-{idx}">
+                    <div class="intel-card-header">
+                        <div>
+                            <div class="company-name-big">{org}</div>
+                            <div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                                <span class="company-domain-tag">{domain}</span>
+                                {"<span class='city-badge'>📍 " + city + "</span>" if city != "—" else ""}
+                                <span style="font-size:0.75rem;color:#334155">{len(pages_scraped)} page(s) scanned</span>
+                            </div>
+                        </div>
+                        <a href="{website}" target="_blank"
+                           style="background:rgba(99,102,241,0.15);border:1px solid rgba(99,102,241,0.3);
+                                  color:#a5b4fc;padding:8px 16px;border-radius:8px;text-decoration:none;
+                                  font-size:0.82rem;font-weight:600;white-space:nowrap">
+                           🌐 Visit Website ↗
+                        </a>
+                    </div>
+                    {f'<div style="font-size:0.87rem;color:#64748b;margin-bottom:8px;line-height:1.6">{desc[:300]}</div>' if desc else ""}
+                </div>
+                """, unsafe_allow_html=True)
+
+                # Tabs for each intel category
+                tabs = st.tabs(["🛠 Services & Offerings", "🏗 Portfolio & Projects",
+                                 "🔗 Social Presence", "📞 Contact Details",
+                                 "🖼 Visual Gallery", "🏆 Awards & Recognition"])
+
+                # ── Services ────────────────────────────────────────────────
+                with tabs[0]:
+                    if services:
+                        tags = "".join(f'<span class="service-tag">{s}</span>' for s in services)
+                        st.markdown(
+                            f'<div class="intel-section-label">Services / Offerings ({len(services)} found)</div>'
+                            f'<div>{tags}</div>',
+                            unsafe_allow_html=True,
+                        )
+                    else:
+                        st.markdown('<div class="not-found">No services found on publicly accessible pages.</div>', unsafe_allow_html=True)
+
+                # ── Projects ────────────────────────────────────────────────
+                with tabs[1]:
+                    if projects:
+                        tags = "".join(f'<span class="project-tag">📐 {p}</span>' for p in projects)
+                        st.markdown(
+                            f'<div class="intel-section-label">Portfolio / Projects ({len(projects)} found)</div>'
+                            f'<div>{tags}</div>',
+                            unsafe_allow_html=True,
+                        )
+                    else:
+                        st.markdown('<div class="not-found">No portfolio entries found. The company may use JavaScript to render their portfolio.</div>', unsafe_allow_html=True)
+
+                # ── Social ──────────────────────────────────────────────────
+                with tabs[2]:
+                    if social:
+                        st.markdown('<div class="intel-section-label">Social Media Profiles</div>', unsafe_allow_html=True)
+                        links_html = ""
+                        for platform, link in social.items():
+                            icon = _social_icon(platform)
+                            links_html += f'<a href="{link}" target="_blank" class="social-link">{icon} {platform.title()}</a>'
+                        st.markdown(f'<div style="display:flex;flex-wrap:wrap;gap:4px">{links_html}</div>', unsafe_allow_html=True)
+                        st.markdown(
+                            "<div style='font-size:0.75rem;color:#334155;margin-top:12px'>⚠️ Social profile URLs extracted from website. "
+                            "Actual post content requires platform API access.</div>",
+                            unsafe_allow_html=True,
+                        )
+                    else:
+                        st.markdown('<div class="not-found">No social media links found on public pages.</div>', unsafe_allow_html=True)
+
+                # ── Contact ──────────────────────────────────────────────────
+                with tabs[3]:
+                    has_contact = phones or emails
+                    if phones:
+                        st.markdown('<div class="intel-section-label">Phone Numbers</div>', unsafe_allow_html=True)
+                        for ph in phones:
+                            st.markdown(f'<div class="contact-item">📞 <a href="tel:{ph}">{ph}</a></div>', unsafe_allow_html=True)
+                    if emails:
+                        st.markdown('<div class="intel-section-label">Email Addresses</div>', unsafe_allow_html=True)
+                        for em in emails:
+                            st.markdown(f'<div class="contact-item">✉️ <a href="mailto:{em}">{em}</a></div>', unsafe_allow_html=True)
+                    if not has_contact:
+                        st.markdown('<div class="not-found">No public contact details found.</div>', unsafe_allow_html=True)
+                    st.markdown(
+                        "<div style='font-size:0.73rem;color:#1e293b;margin-top:10px'>"
+                        "Only publicly listed business contact details are shown.</div>",
+                        unsafe_allow_html=True,
+                    )
+
+                # ── Gallery ──────────────────────────────────────────────────
+                with tabs[4]:
+                    if gallery:
+                        st.markdown(f'<div class="intel-section-label">Portfolio Images ({len(gallery)} found)</div>', unsafe_allow_html=True)
+                        # Display as a Streamlit columns grid
+                        cols = st.columns(min(4, len(gallery)))
+                        for img_idx, img_url in enumerate(gallery[:12]):
+                            with cols[img_idx % 4]:
+                                try:
+                                    st.image(img_url, use_container_width=True)
+                                except Exception:
+                                    st.markdown(f'<a href="{img_url}" target="_blank" style="color:#6366f1;font-size:0.75rem">Image {img_idx+1}</a>', unsafe_allow_html=True)
+                    else:
+                        st.markdown('<div class="not-found">No portfolio images found.</div>', unsafe_allow_html=True)
+
+                # ── Awards ──────────────────────────────────────────────────
+                with tabs[5]:
+                    if awards:
+                        for aw in awards:
+                            st.markdown(f'<div style="font-size:0.85rem;color:#fbbf24;margin:6px 0">🏆 {aw}</div>', unsafe_allow_html=True)
+                    else:
+                        st.markdown('<div class="not-found">No awards or recognitions found on public pages.</div>', unsafe_allow_html=True)
+
+                st.markdown('<hr style="margin:16px 0 24px">', unsafe_allow_html=True)
+
+    # ── Competitive comparison (when multiple results) ─────────────────────
+    ok_results = [r for r in results if r.get("ok")]
+    if len(ok_results) > 1:
+        st.markdown("### 📊 Competitive Comparison")
+        comp_data = []
+        for r in ok_results:
+            comp_data.append({
+                "Company": r.get("org_name") or r["domain"],
+                "City": r.get("city") or "—",
+                "Services Found": len(r.get("services", [])),
+                "Projects Found": len(r.get("projects", [])),
+                "Social Channels": len(r.get("social", {})),
+                "Images Found": len(r.get("gallery", [])),
+                "Has Email": "✅" if r.get("email") else "❌",
+                "Has Phone": "✅" if r.get("phone") else "❌",
+                "Pages Scanned": len(r.get("pages_scraped", [])),
+                "Website": r.get("website") or "—",
+            })
+        df_comp = pd.DataFrame(comp_data)
+        st.dataframe(df_comp, use_container_width=True, height=200)
+
+        # Export comparison
+        csv_io = __import__("io").StringIO()
+        df_comp.to_csv(csv_io, index=False)
+        st.download_button(
+            "⬇️ Export Comparison CSV",
+            data=csv_io.getvalue(),
+            file_name=f"archscale_comparison_{datetime.date.today()}.csv",
+            mime="text/csv",
+        )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # PAGE: Dashboard
 # ═══════════════════════════════════════════════════════════════════════════════
-if nav_choice == "📊 Dashboard":
-    metrics = get_metrics()
+elif nav == "📊 Dashboard":
+    try:
+        with db.get_connection(DB_PATH) as conn:
+            metrics = db.get_summary_metrics(conn)
+    except Exception:
+        metrics = {}
 
-    # Metric grid
-    st.markdown('<div class="metric-grid">', unsafe_allow_html=True)
-    col1, col2, col3, col4, col5 = st.columns(5)
-    with col1:
-        st.metric("🏢 Companies", metrics.get("total_companies", 0))
-    with col2:
-        st.metric("📋 Evidence Rows", metrics.get("total_evidence", 0))
-    with col3:
-        st.metric("🟡 Needs Review", metrics.get("needs_review", 0))
-    with col4:
-        st.metric("⬜ Not Found", metrics.get("not_found", 0))
-    with col5:
+    c1, c2, c3, c4, c5 = st.columns(5)
+    with c1: st.metric("🏢 Companies", metrics.get("total_companies", 0))
+    with c2: st.metric("📋 Evidence Rows", metrics.get("total_evidence", 0))
+    with c3: st.metric("🟡 Needs Review", metrics.get("needs_review", 0))
+    with c4: st.metric("⬜ Not Found", metrics.get("not_found", 0))
+    with c5:
         last = metrics.get("last_run")
         st.metric("🔄 Last Run", last["status"].title() if last else "Never")
-    st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown("---")
+    col_l, col_r = st.columns([2, 1])
 
-    # Recent companies quick view
-    col_left, col_right = st.columns([2, 1])
-
-    with col_left:
-        st.markdown("#### Recently Scraped Companies")
-        companies = get_companies()
+    with col_l:
+        st.markdown("#### Recently Saved Companies")
+        try:
+            with db.get_connection(DB_PATH) as conn:
+                companies = db.list_companies(conn)
+        except Exception:
+            companies = []
 
         if not companies:
-            st.info(
-                "📭 No companies scraped yet.\n\n"
-                "Go to **⚙️ Scrape Control** to run your first scrape, or check that "
-                "`data/seed_urls.csv` contains valid URLs."
-            )
+            st.info("No companies saved yet. Use **🎯 Competitor Analyser** and click **💾 Save to Database**.")
         else:
             for comp in list(companies)[:8]:
-                org = comp["org_name"] or comp["domain_key"]
-                owner = comp["owner_name"] or "—"
-                city = comp["city"] or "—"
-                cat_badge = "🏗️ Arch" if comp["category"] == "architecture" else "🛋️ Interior"
-                review_count = comp["needs_review_count"] or 0
-
-                review_note = f' <span style="color:#fbbf24">⚠ {review_count} to review</span>' if review_count else ""
-
+                org   = comp["org_name"] or comp["domain_key"]
+                city  = comp["city"] or "—"
+                cat   = "🏗️ Arch" if comp["category"] == "architecture" else "🛋️ Interior"
                 st.markdown(f"""
-                <div class="company-card" onclick="">
-                    <div class="company-name">{org}</div>
-                    <div class="company-meta">
-                        <span class="company-domain">{comp["domain_key"]}</span>
-                        &nbsp;·&nbsp; {cat_badge}
-                        &nbsp;·&nbsp; 📍 {city}
-                        &nbsp;·&nbsp; 👤 {owner}
-                        {review_note}
+                <div class="intel-card" style="padding:16px 20px">
+                    <div class="company-name-big" style="font-size:1rem">{org}</div>
+                    <div style="font-size:0.8rem;color:#475569;margin-top:4px">
+                        <span class="company-domain-tag">{comp["domain_key"]}</span>
+                        &nbsp;{cat}&nbsp;·&nbsp;📍 {city}
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
 
-    with col_right:
-        st.markdown("#### Data Quality Overview")
-
-        if metrics.get("total_evidence", 0) == 0:
-            st.info("Run a scrape to populate quality metrics.")
-        else:
-            try:
-                with db.get_connection(DB_PATH) as conn:
-                    status_counts = conn.execute(
-                        "SELECT verification_status, COUNT(*) as cnt FROM evidence GROUP BY verification_status"
-                    ).fetchall()
-
-                labels = [r["verification_status"] for r in status_counts]
-                values = [r["cnt"] for r in status_counts]
-
-                df_chart = pd.DataFrame({"Status": labels, "Count": values})
-                st.bar_chart(df_chart.set_index("Status"))
-            except Exception:
-                st.warning("Unable to load chart data.")
-
-        st.markdown("---")
-        st.markdown("#### Verification Status Key")
-        for status, color in VERIFICATION_COLORS.items():
-            st.markdown(
-                f'<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">'
-                f'<div style="width:10px;height:10px;border-radius:50%;background:{color}"></div>'
-                f'<span style="font-size:0.82rem;color:#94a3b8">{status}</span>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
+    with col_r:
+        st.markdown("#### Data Quality")
+        try:
+            with db.get_connection(DB_PATH) as conn:
+                sc = conn.execute(
+                    "SELECT verification_status, COUNT(*) c FROM evidence GROUP BY verification_status"
+                ).fetchall()
+            if sc:
+                df_q = pd.DataFrame([dict(r) for r in sc]).set_index("verification_status")
+                st.bar_chart(df_q["c"])
+        except Exception:
+            st.info("Run a scrape to see quality metrics.")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# PAGE: Browse Companies
+# PAGE: Saved Companies
 # ═══════════════════════════════════════════════════════════════════════════════
-elif nav_choice == "🔍 Browse Companies":
-    st.markdown("#### Company Intelligence Table")
+elif nav == "🔍 Saved Companies":
+    st.markdown("#### Saved Company Intelligence")
 
-    # Filters
-    filter_col1, filter_col2, filter_col3, filter_col4 = st.columns([3, 2, 2, 2])
-    with filter_col1:
-        search = st.text_input("🔍 Search", placeholder="Company, owner, email, city…", key="search_input")
-    with filter_col2:
-        category_filter = st.selectbox("Category", ["", "architecture", "interior", "other"], key="cat_filter")
-    with filter_col3:
-        city_filter = st.text_input("City", placeholder="e.g. Mumbai", key="city_filter")
-    with filter_col4:
-        status_filter = st.selectbox(
-            "Verification Status",
-            ["", "Extracted", "Source checked", "Cross-verified", "Not found", "Needs review"],
-            key="status_filter",
-        )
+    fc1, fc2, fc3, fc4 = st.columns([3, 2, 2, 2])
+    with fc1: search   = st.text_input("Search", placeholder="Company, owner, email…", key="search_saved")
+    with fc2: cat_f    = st.selectbox("Category", ["", "architecture", "interior", "other"], key="cat_saved")
+    with fc3: city_f   = st.text_input("City", placeholder="e.g. Ahmedabad", key="city_saved")
+    with fc4: status_f = st.selectbox("Status", ["", "Extracted", "Source checked", "Cross-verified", "Not found", "Needs review"], key="status_saved")
 
-    companies = get_companies(
-        search=search,
-        category=category_filter,
-        city=city_filter,
-        status=status_filter,
-    )
+    try:
+        with db.get_connection(DB_PATH) as conn:
+            companies = db.list_companies(conn, search=search, category=cat_f, city=city_f, status=status_f)
+    except Exception as exc:
+        st.error(f"DB error: {exc}")
+        companies = []
 
     if not companies:
-        if search or category_filter or city_filter or status_filter:
-            st.warning("No companies match the current filters.")
-        else:
-            st.info(
-                "📭 No companies found. Run a scrape from **⚙️ Scrape Control** first."
-            )
+        st.info("No companies match the filters, or none saved yet.")
     else:
-        st.caption(f"Showing {len(companies)} company/companies")
-
-        # Table display
-        table_data = []
-        for comp in companies:
-            table_data.append({
-                "Organisation": comp["org_name"] or "—",
-                "Domain": comp["domain_key"],
-                "Category": comp["category"].title(),
-                "Owner / Founder": comp["owner_name"] or "—",
-                "Designation": comp["designation"] or "—",
-                "City": comp["city"] or "—",
-                "Email": comp["email"] or "—",
-                "Phone": comp["phone"] or "—",
-                "Website": comp["website"] or "—",
-                "LinkedIn": comp["linkedin"] or "—",
-                "Last Scraped": (comp["last_scraped_at"] or "")[:10],
-                "⚠ Review": comp["needs_review_count"] or 0,
-            })
-
-        df = pd.DataFrame(table_data)
-        st.dataframe(df, use_container_width=True, height=420)
-
-        st.markdown("---")
-
-        # Company detail viewer
-        st.markdown("#### Company Detail View")
-        company_names = [
-            f"{comp['org_name'] or comp['domain_key']} ({comp['domain_key']})"
-            for comp in companies
-        ]
-        comp_map = {
-            f"{comp['org_name'] or comp['domain_key']} ({comp['domain_key']})": comp
-            for comp in companies
-        }
-
-        selected_name = st.selectbox("Select company to inspect:", ["— select —"] + company_names, key="detail_select")
-        if selected_name and selected_name != "— select —":
-            comp = comp_map[selected_name]
-            st.session_state.selected_company_id = comp["id"]
-
-            # Header
-            col_a, col_b = st.columns([3, 1])
-            with col_a:
-                org = comp["org_name"] or comp["domain_key"]
-                st.markdown(f"### {org}")
-                if comp["website"]:
-                    st.markdown(f"🌐 [{comp['website']}]({comp['website']})")
-            with col_b:
-                cat = comp["category"].title()
-                st.markdown(f"**Category:** {cat}")
-                st.markdown(f"**Last scraped:** {(comp['last_scraped_at'] or '')[:10]}")
-
-            # Key fields
-            fc1, fc2, fc3 = st.columns(3)
-            with fc1:
-                st.markdown(f"**👤 Owner/Founder:** {comp['owner_name'] or '—'}")
-                st.markdown(f"**🎖️ Designation:** {comp['designation'] or '—'}")
-            with fc2:
-                st.markdown(f"**📞 Phone:** {comp['phone'] or '—'}")
-                st.markdown(f"**✉️ Email:** {comp['email'] or '—'}")
-            with fc3:
-                st.markdown(f"**📍 City:** {comp['city'] or '—'}")
-                st.markdown(f"**👥 Org Size:** {comp['org_size'] or '—'}")
-
-            # Social links
-            socials = []
-            for f, label in [("linkedin", "LinkedIn"), ("instagram", "Instagram"),
-                             ("facebook", "Facebook"), ("twitter", "Twitter")]:
-                if comp[f]:
-                    socials.append(f"[{label}]({comp[f]})")
-            if socials:
-                st.markdown("**Social Links:** " + " · ".join(socials))
-
-            if comp["needs_review_count"]:
-                st.warning(f"⚠️ {comp['needs_review_count']} field(s) need manual review before this record can be considered verified.")
-
-            st.markdown("---")
-            st.caption(
-                "ℹ️ All values above come from publicly accessible web pages. "
-                "Owner/founder information is marked 'Needs review' and requires manual confirmation."
-            )
+        st.caption(f"{len(companies)} company/companies")
+        rows = [{
+            "Organisation": c["org_name"] or "—", "Domain": c["domain_key"],
+            "Category": c["category"].title(), "City": c["city"] or "—",
+            "Email": c["email"] or "—", "Phone": c["phone"] or "—",
+            "Website": c["website"] or "—", "LinkedIn": c["linkedin"] or "—",
+            "Last Scraped": (c["last_scraped_at"] or "")[:10],
+            "⚠ Review": c["needs_review_count"] or 0,
+        } for c in companies]
+        df = pd.DataFrame(rows)
+        st.dataframe(df, use_container_width=True, height=400)
 
         # Export
-        st.markdown("---")
-        st.markdown("#### Export")
-        if st.button("⬇️ Export filtered results to CSV"):
-            csv_data = export_csv(
-                db_path=DB_PATH,
-                search=search,
-                category=category_filter,
-                city=city_filter,
-                status=status_filter,
-            )
+        if st.button("⬇️ Export to CSV"):
+            csv_data = export_csv(DB_PATH, search=search, category=cat_f, city=city_f, status=status_f)
             if csv_data:
-                st.download_button(
-                    "📥 Download CSV",
-                    data=csv_data,
-                    file_name="archscale_companies.csv",
-                    mime="text/csv",
-                )
-            else:
-                st.warning("No data to export with current filters.")
+                st.download_button("📥 Download CSV", data=csv_data,
+                                   file_name="archscale_saved.csv", mime="text/csv")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # PAGE: Evidence Inspector
 # ═══════════════════════════════════════════════════════════════════════════════
-elif nav_choice == "🔬 Evidence Inspector":
+elif nav == "🔬 Evidence":
     st.markdown("#### Field-Level Evidence Inspector")
-    st.caption(
-        "Every extracted value retains its source URL, supporting text, extraction method, "
-        "and verification status. Use this view to inspect provenance and approve/reject values."
-    )
+    st.caption("Every value has a traceable source URL and extraction timestamp.")
 
-    companies = get_companies()
+    try:
+        with db.get_connection(DB_PATH) as conn:
+            companies = db.list_companies(conn)
+    except Exception:
+        companies = []
+
     if not companies:
-        st.info("No companies available. Run a scrape first.")
+        st.info("No companies saved. Run the Competitor Analyser and save results first.")
     else:
-        company_options = [
-            f"{comp['org_name'] or comp['domain_key']} ({comp['domain_key']})"
-            for comp in companies
-        ]
-        comp_map = {
-            f"{comp['org_name'] or comp['domain_key']} ({comp['domain_key']})": comp
-            for comp in companies
-        }
-
-        sel = st.selectbox("Select Company", ["— select —"] + company_options, key="evidence_select")
+        options = [f"{c['org_name'] or c['domain_key']} ({c['domain_key']})" for c in companies]
+        cmap = {f"{c['org_name'] or c['domain_key']} ({c['domain_key']})": c for c in companies}
+        sel = st.selectbox("Company", ["— select —"] + options)
 
         if sel and sel != "— select —":
-            comp = comp_map[sel]
-            company_id = comp["id"]
+            comp = cmap[sel]
+            try:
+                with db.get_connection(DB_PATH) as conn:
+                    evidence = db.get_evidence_for_company(conn, comp["id"])
+            except Exception as exc:
+                st.error(str(exc))
+                evidence = []
 
-            evidence_rows = get_evidence(company_id)
+            fields: dict[str, list] = {}
+            for ev in evidence:
+                fields.setdefault(ev["field_name"], []).append(ev)
 
-            if not evidence_rows:
-                st.warning("No evidence found for this company.")
-            else:
-                # Group by field
-                fields_seen: dict[str, list] = {}
-                for ev in evidence_rows:
-                    fn = ev["field_name"]
-                    fields_seen.setdefault(fn, []).append(ev)
+            for field_name, rows in fields.items():
+                with st.expander(f"**{field_name}** ({len(rows)} candidate(s))"):
+                    for ev in rows:
+                        status = ev["verification_status"]
+                        val    = ev["extracted_value"] or "*Not found*"
+                        src    = ev["source_url"]
+                        ts     = (ev["extracted_at"] or "")[:19].replace("T", " ")
+                        st.markdown(
+                            f"**Value:** `{val}`  \n"
+                            f"**Source:** [{src[:70]}]({src})  \n"
+                            f"**Method:** {ev['extraction_method'] or '—'}  \n"
+                            f"**Status:** `{status}`  \n"
+                            f"**Extracted:** {ts}",
+                        )
+                        if ev["supporting_text"]:
+                            with st.expander("Supporting text"):
+                                st.code(ev["supporting_text"][:800])
 
-                st.markdown(f"**{len(evidence_rows)} evidence record(s) across {len(fields_seen)} field(s)**")
-
-                for field_name, rows in fields_seen.items():
-                    label = FIELD_LABELS.get(field_name, field_name)
-                    icon = icon_for_field(field_name)
-
-                    with st.expander(f"{icon} {label}  ({len(rows)} candidate(s))", expanded=(field_name in ("org_name", "owner_name", "email", "phone"))):
-                        for ev in rows:
-                            status = ev["verification_status"]
-                            value = ev["extracted_value"] or "*Not found*"
-                            source_url = ev["source_url"]
-                            method = ev["extraction_method"] or "unknown"
-                            snippet = ev["supporting_text"] or ""
-                            extracted_at = (ev["extracted_at"] or "")[:19].replace("T", " ")
-
-                            st.markdown(f"""
-                            <div class="evidence-row">
-                                <div class="evidence-field">{label} &nbsp;&nbsp; {badge_html(status)}</div>
-                                <div class="evidence-value">{value}</div>
-                                <div class="evidence-source">
-                                    Source: <a href="{source_url}" target="_blank" style="color:#6366f1">{source_url[:80]}</a>
-                                    &nbsp;·&nbsp; Method: <em>{method}</em>
-                                    &nbsp;·&nbsp; Extracted: {extracted_at}
-                                </div>
-                            </div>
-                            """, unsafe_allow_html=True)
-
-                            if snippet:
-                                with st.expander("📄 Supporting text / JSON-LD context", expanded=False):
-                                    st.code(snippet[:1000], language="json" if method == "json_ld" else "text")
-
-                            # Status update controls
-                            ev_id = ev["id"]
-                            new_status = st.selectbox(
-                                "Update status",
-                                ["Extracted", "Source checked", "Cross-verified", "Not found", "Needs review"],
-                                index=["Extracted", "Source checked", "Cross-verified", "Not found", "Needs review"].index(status)
-                                      if status in ["Extracted", "Source checked", "Cross-verified", "Not found", "Needs review"]
-                                      else 0,
-                                key=f"status_{ev_id}",
-                            )
-                            reviewer_note = st.text_input(
-                                "Reviewer note (optional)",
-                                key=f"note_{ev_id}",
-                                placeholder="Add note for this field...",
-                            )
-                            if st.button("💾 Save", key=f"save_{ev_id}"):
-                                try:
-                                    import datetime
-                                    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
-                                    with db.get_connection(DB_PATH) as conn:
-                                        db.update_evidence_status(conn, ev_id, new_status, reviewer_note or None, now)
-                                    st.success("Status updated.")
-                                    st.rerun()
-                                except Exception as exc:
-                                    st.error(f"Update failed: {exc}")
-
-                            st.markdown("---")
+                        new_status = st.selectbox(
+                            "Update status",
+                            ["Extracted","Source checked","Cross-verified","Not found","Needs review"],
+                            index=["Extracted","Source checked","Cross-verified","Not found","Needs review"].index(status)
+                            if status in ["Extracted","Source checked","Cross-verified","Not found","Needs review"] else 0,
+                            key=f"ev_status_{ev['id']}",
+                        )
+                        note = st.text_input("Note", key=f"ev_note_{ev['id']}")
+                        if st.button("Save", key=f"ev_save_{ev['id']}"):
+                            try:
+                                with db.get_connection(DB_PATH) as conn:
+                                    db.update_evidence_status(conn, ev["id"], new_status, note or None, _now())
+                                st.success("Saved")
+                                st.rerun()
+                            except Exception as exc:
+                                st.error(str(exc))
+                        st.markdown("---")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# PAGE: Scrape Control
+# PAGE: Bulk Scrape (seed CSV based)
 # ═══════════════════════════════════════════════════════════════════════════════
-elif nav_choice == "⚙️ Scrape Control":
-    st.markdown("#### Scrape Control Panel")
-    st.caption(
-        "Launch a scraping run against the approved company URLs in `data/seed_urls.csv`. "
-        "The scraper checks robots.txt, respects rate limits, and never fabricates data."
-    )
+elif nav == "⚙️ Bulk Scrape":
+    st.markdown("#### Bulk Scrape from Approved URL List")
+    st.caption("Scrape multiple companies from `data/seed_urls.csv` and save all results to the database.")
 
-    # Seed CSV preview
-    col_seed, col_info = st.columns([2, 1])
-    with col_seed:
-        st.markdown("**Current Seed URLs** (`data/seed_urls.csv`)")
+    col_s, col_i = st.columns([2, 1])
+    with col_s:
+        st.markdown("**Current Seed List** (`data/seed_urls.csv`)")
         if SEED_CSV.exists():
             try:
                 df_seed = pd.read_csv(SEED_CSV)
-                st.dataframe(df_seed, use_container_width=True, height=260)
-                st.caption(f"{len(df_seed)} URL(s) loaded")
+                st.dataframe(df_seed, use_container_width=True, height=250)
+                st.caption(f"{len(df_seed)} URL(s)")
             except Exception as exc:
-                st.error(f"Cannot read seed CSV: {exc}")
+                st.error(str(exc))
         else:
-            st.warning(
-                "⚠️ `data/seed_urls.csv` not found.\n\n"
-                "Create the file with columns: `url`, `category` (architecture / interior / other), `notes`."
-            )
+            st.warning("seed_urls.csv not found.")
 
-    with col_info:
-        st.markdown("**Scraping behaviour**")
-        st.markdown("""
-        - ✅ Checks `robots.txt` before fetching
-        - ✅ Rate-limits requests per domain
-        - ✅ Validates URLs (SSRF protection)
-        - ✅ Deduplicates on re-run
-        - ✅ Logs all errors
-        - ❌ Does not bypass auth/CAPTCHAs
-        - ❌ Does not invent or infer data
-        - ❌ Does not scrape search engines
-        """)
-
-    st.markdown("---")
-
-    # CSV upload for adding new URLs
-    st.markdown("**Add URLs via CSV upload** (will merge with existing seed file)")
-    uploaded = st.file_uploader(
-        "Upload CSV (columns: url, category, notes)",
-        type=["csv"],
-        key="url_uploader",
-    )
-    if uploaded:
-        try:
-            new_df = pd.read_csv(uploaded)
-            if "url" not in new_df.columns:
-                st.error("Uploaded CSV must have a 'url' column.")
-            else:
-                existing = pd.read_csv(SEED_CSV) if SEED_CSV.exists() else pd.DataFrame(columns=["url", "category", "notes"])
-                merged = pd.concat([existing, new_df]).drop_duplicates(subset=["url"])
-                merged.to_csv(SEED_CSV, index=False)
-                st.success(f"✅ Merged. Seed file now contains {len(merged)} URL(s).")
-                st.rerun()
-        except Exception as exc:
-            st.error(f"Failed to process upload: {exc}")
-
-    st.markdown("---")
-
-    # Scrape action
-    if st.session_state.scrape_running:
-        st.warning("⏳ A scraping run is in progress…")
-
-        if st.session_state.scrape_log:
-            log_text = "\n".join(st.session_state.scrape_log[-30:])
-            st.text_area("Scrape log", value=log_text, height=300, key="scrape_log_area", disabled=True)
-
-        if st.button("🔄 Refresh status"):
-            st.rerun()
-
-    else:
-        if st.button("🚀 Start Scrape Run", type="primary"):
-            st.session_state.scrape_running = True
-            st.session_state.scrape_log = []
-            st.session_state.scrape_result = None
-
-            log_container = st.empty()
-            progress_bar = st.progress(0)
-
-            log_lines: list[str] = []
-
-            def append_log(msg: str) -> None:
-                log_lines.append(msg)
-                log_container.text_area(
-                    "Scrape log",
-                    value="\n".join(log_lines[-30:]),
-                    height=300,
-                    key="live_log",
-                    disabled=True,
-                )
-
+    with col_i:
+        st.markdown("**Upload additional URLs**")
+        upl = st.file_uploader("CSV (url, category, notes)", type=["csv"])
+        if upl:
             try:
-                append_log("Starting scrape run…")
-                result = run_scrape(
-                    seed_csv_path=SEED_CSV,
-                    db_path=DB_PATH,
-                    progress_callback=append_log,
-                )
-                st.session_state.scrape_result = result
-                st.session_state.scrape_log = log_lines
-                append_log("✅ Scrape complete!")
+                new_df = pd.read_csv(upl)
+                if "url" not in new_df.columns:
+                    st.error("CSV must have a 'url' column.")
+                else:
+                    existing = pd.read_csv(SEED_CSV) if SEED_CSV.exists() else pd.DataFrame(columns=["url","category","notes"])
+                    merged = pd.concat([existing, new_df]).drop_duplicates(subset=["url"])
+                    merged.to_csv(SEED_CSV, index=False)
+                    st.success(f"Merged. {len(merged)} total URL(s).")
+                    st.rerun()
             except Exception as exc:
-                st.error(f"❌ Scrape failed with exception: {exc}")
-                logger.exception("Scrape run failed")
-            finally:
-                st.session_state.scrape_running = False
-                progress_bar.progress(100)
-
-        if st.session_state.scrape_result:
-            res = st.session_state.scrape_result
-            st.success(
-                f"✅ Last run #{res['run_id']}: "
-                f"{res['urls_succeeded']}/{res['urls_attempted']} succeeded, "
-                f"{res['urls_failed']} failed."
-            )
-            if res["errors"]:
-                with st.expander(f"⚠️ {len(res['errors'])} error(s)"):
-                    for err in res["errors"]:
-                        st.markdown(
-                            f"- **{err['url']}** — `{err['error']}`: {err.get('detail', '')}"
-                        )
+                st.error(str(exc))
 
     st.markdown("---")
+    if st.button("🚀 Start Bulk Scrape", type="primary"):
+        log_box = st.empty()
+        log_lines: list[str] = []
 
-    # Scrape run history
-    st.markdown("#### Scrape Run History")
+        def log(msg):
+            log_lines.append(msg)
+            log_box.text_area("Log", value="\n".join(log_lines[-25:]), height=260, disabled=True, key="bulk_log")
+
+        try:
+            result = run_scrape(seed_csv_path=SEED_CSV, db_path=DB_PATH, progress_callback=log)
+            st.success(f"✅ Run #{result['run_id']}: {result['urls_succeeded']}/{result['urls_attempted']} succeeded.")
+            if result["errors"]:
+                with st.expander(f"⚠️ {len(result['errors'])} error(s)"):
+                    for e in result["errors"]:
+                        st.markdown(f"- `{e['url']}` — {e['error']}: {e.get('detail','')}")
+        except Exception as exc:
+            st.error(f"Scrape failed: {exc}")
+            logger.exception("Bulk scrape failed")
+
+    st.markdown("---")
+    st.markdown("#### Run History")
     try:
         with db.get_connection(DB_PATH) as conn:
-            runs = conn.execute(
-                "SELECT * FROM scrape_runs ORDER BY id DESC LIMIT 20"
-            ).fetchall()
+            runs = conn.execute("SELECT * FROM scrape_runs ORDER BY id DESC LIMIT 10").fetchall()
         if runs:
-            runs_data = [dict(r) for r in runs]
-            df_runs = pd.DataFrame(runs_data)
-            st.dataframe(df_runs, use_container_width=True)
+            st.dataframe(pd.DataFrame([dict(r) for r in runs]), use_container_width=True)
         else:
-            st.info("No scrape runs yet.")
+            st.info("No runs yet.")
     except Exception as exc:
-        st.error(f"Could not load run history: {exc}")
-
-    st.markdown("---")
-
-    # Error log
-    st.markdown("#### Recent Scrape Errors")
-    try:
-        with db.get_connection(DB_PATH) as conn:
-            errs = conn.execute(
-                "SELECT * FROM scrape_errors ORDER BY id DESC LIMIT 50"
-            ).fetchall()
-        if errs:
-            errs_data = [dict(e) for e in errs]
-            df_errs = pd.DataFrame(errs_data)
-            st.dataframe(df_errs, use_container_width=True)
-        else:
-            st.info("No errors recorded yet.")
-    except Exception as exc:
-        st.error(f"Could not load error log: {exc}")
+        st.error(str(exc))

@@ -382,10 +382,260 @@ def _extract_city(soup: BeautifulSoup, source_url: str) -> list[Candidate]:
 
 # ─── Website field ────────────────────────────────────────────────────────────
 
+def _extract_services(soup: BeautifulSoup, source_url: str) -> list[Candidate]:
+    """
+    Extract services, products, or project types offered by the firm.
+    Looks for list items, service cards, and heading-preceded paragraphs.
+    """
+    candidates: list[Candidate] = []
+    seen: set[str] = set()
+
+    # Service keywords to look for in section headings
+    SERVICE_SECTION_KW = re.compile(
+        r"\b(services?|what we do|our work|solutions?|offerings?|expertise|capabilities|"
+        r"projects?|portfolio|specializ|product|design services?)\b",
+        re.IGNORECASE,
+    )
+
+    # Look for sections that likely describe services
+    for heading in soup.find_all(["h1", "h2", "h3", "h4"]):
+        heading_text = heading.get_text(strip=True)
+        if not SERVICE_SECTION_KW.search(heading_text):
+            continue
+
+        # Collect list items or paragraphs following this heading
+        sibling = heading.find_next_sibling()
+        collected = 0
+        while sibling and collected < 12:
+            if sibling.name in ("ul", "ol"):
+                for li in sibling.find_all("li"):
+                    val = _clean(li.get_text(separator=" ", strip=True))
+                    if val and 4 < len(val) < 200 and val not in seen:
+                        seen.add(val)
+                        candidates.append(Candidate(
+                            "service", val, source_url,
+                            f"Under '{heading_text}': {val}",
+                            "html_content",
+                        ))
+                        collected += 1
+            elif sibling.name in ("p", "div"):
+                val = _clean(sibling.get_text(separator=" ", strip=True))
+                if val and 8 < len(val) < 300 and val not in seen:
+                    seen.add(val)
+                    candidates.append(Candidate(
+                        "service", val, source_url,
+                        f"Under '{heading_text}': {val}",
+                        "html_content",
+                    ))
+                    collected += 1
+            elif sibling.name in ("h1", "h2", "h3", "h4"):
+                break  # reached next section
+            sibling = sibling.find_next_sibling()
+
+    return candidates[:15]
+
+
+def _extract_projects(soup: BeautifulSoup, source_url: str) -> list[Candidate]:
+    """
+    Extract project names, portfolio entries, or case study titles.
+    """
+    candidates: list[Candidate] = []
+    seen: set[str] = set()
+
+    PROJECT_KW = re.compile(
+        r"\b(project|portfolio|case study|our work|featured work|completed|"
+        r"residential|commercial|luxury|interior|renovation|architecture)\b",
+        re.IGNORECASE,
+    )
+
+    # Look for article/card elements that mention project names
+    for container in soup.find_all(["article", "section", "div"], class_=True):
+        cls_str = " ".join(container.get("class", []))
+        if not PROJECT_KW.search(cls_str):
+            continue
+        # Get heading inside the container
+        heading = container.find(["h2", "h3", "h4", "h5"])
+        if heading:
+            val = _clean(heading.get_text(separator=" ", strip=True))
+            if val and 4 < len(val) < 150 and val not in seen:
+                seen.add(val)
+                desc_el = container.find("p")
+                desc = _clean(desc_el.get_text(separator=" ", strip=True)) if desc_el else None
+                snippet = f"Project: {val}" + (f" — {desc[:100]}" if desc else "")
+                candidates.append(Candidate(
+                    "project", val, source_url, snippet, "html_content",
+                ))
+
+    return candidates[:10]
+
+
+def _extract_gallery_images(soup: BeautifulSoup, source_url: str) -> list[Candidate]:
+    """
+    Extract image URLs that look like portfolio/gallery photos.
+    """
+    candidates: list[Candidate] = []
+    seen: set[str] = set()
+    base_parsed = urllib.parse.urlparse(source_url)
+
+    for img in soup.find_all("img"):
+        src = img.get("src", "") or img.get("data-src", "") or img.get("data-lazy-src", "")
+        if not src:
+            continue
+        # Resolve relative
+        abs_src = urllib.parse.urljoin(source_url, src)
+        if abs_src in seen:
+            continue
+
+        # Filter out tiny icons, logos, base64
+        if "data:image" in abs_src or abs_src in seen:
+            continue
+
+        parsed_img = urllib.parse.urlparse(abs_src)
+        # Only same-domain or HTTPS images
+        if parsed_img.scheme not in ("http", "https"):
+            continue
+
+        alt = _clean(img.get("alt", "")) or ""
+        if any(skip in abs_src.lower() for skip in ["logo", "icon", "favicon", "avatar", "sprite", "pixel"]):
+            continue
+
+        seen.add(abs_src)
+        candidates.append(Candidate(
+            "gallery_image", abs_src, source_url,
+            f'<img src="{abs_src}" alt="{alt}">',
+            "html_content",
+        ))
+
+        if len(candidates) >= 12:
+            break
+
+    return candidates
+
+
+def _extract_awards(soup: BeautifulSoup, source_url: str) -> list[Candidate]:
+    """Extract awards, recognitions, certifications."""
+    candidates: list[Candidate] = []
+    AWARD_KW = re.compile(
+        r"\b(award|recognition|certified|accredited|winner|finalist|honour|honor|"
+        r"achievement|accolade|ranking|best|top)\b",
+        re.IGNORECASE,
+    )
+    text = soup.get_text(separator=" ", strip=True)
+    for m in AWARD_KW.finditer(text):
+        start = max(0, m.start() - 30)
+        end = min(len(text), m.end() + 120)
+        snippet = _snippet(text[start:end])
+        if len(snippet) > 20:
+            candidates.append(Candidate(
+                "award", snippet, source_url, snippet, "html_content",
+            ))
+        if len(candidates) >= 5:
+            break
+    return candidates
+
+
+# ─── Website field ────────────────────────────────────────────────────────────
+
 def _extract_website(source_url: str) -> Candidate:
     parsed = urllib.parse.urlparse(source_url)
     base = f"{parsed.scheme}://{parsed.netloc}"
     return Candidate("website", base, source_url, f"Seed URL: {base}", "structured")
+
+
+# ─── Main extraction entry point ─────────────────────────────────────────────
+
+def extract(html: str, source_url: str, page_role: str = "homepage") -> list[Candidate]:
+    """
+    Extract all available business intelligence fields from an HTML page.
+
+    Parameters
+    ----------
+    html:       Raw HTML string.
+    source_url: The URL the HTML was fetched from.
+    page_role:  One of 'homepage', 'contact', 'about', 'team', 'services',
+                'portfolio' — controls which heuristics are applied.
+
+    Returns
+    -------
+    List of Candidate objects. Multiple candidates for the same field are
+    allowed and expected.
+    """
+    try:
+        soup = BeautifulSoup(html, "lxml")
+    except Exception as exc:
+        logger.warning("Failed to parse HTML from %s: %s", source_url, exc)
+        return []
+
+    candidates: list[Candidate] = []
+
+    # JSON-LD (highest confidence for structured data)
+    candidates.extend(_extract_jsonld(soup, source_url))
+
+    # Meta tags
+    candidates.extend(_extract_meta(soup, source_url))
+
+    # Social links (all pages)
+    candidates.extend(_extract_social_links(soup, source_url))
+
+    # Org name from headings (fallback)
+    if not any(c.field_name == "org_name" for c in candidates):
+        candidates.extend(_extract_org_name_from_html(soup, source_url))
+
+    # Website
+    candidates.append(_extract_website(source_url))
+
+    # City
+    candidates.extend(_extract_city(soup, source_url))
+
+    # Gallery images (all pages — useful for competitor visual intelligence)
+    candidates.extend(_extract_gallery_images(soup, source_url))
+
+    # Page-role specific extraction
+    if page_role == "contact":
+        candidates.extend(_extract_contact_page(soup, source_url))
+
+    elif page_role in ("about", "team", "leadership", "people", "founders"):
+        candidates.extend(_extract_about_page(soup, source_url))
+        candidates.extend(_extract_contact_page(soup, source_url))
+
+    elif page_role in ("services", "solutions"):
+        candidates.extend(_extract_services(soup, source_url))
+        candidates.extend(_extract_contact_page(soup, source_url))
+
+    elif page_role in ("portfolio", "projects", "work"):
+        candidates.extend(_extract_projects(soup, source_url))
+        candidates.extend(_extract_gallery_images(soup, source_url))
+
+    else:
+        # Homepage: light contact extraction + services + projects
+        candidates.extend(_extract_contact_page(soup, source_url))
+        candidates.extend(_extract_services(soup, source_url))
+        candidates.extend(_extract_projects(soup, source_url))
+        candidates.extend(_extract_awards(soup, source_url))
+
+    return candidates
+
+
+def classify_page_role(url: str) -> str:
+    """Infer the page role from the URL path."""
+    path = urllib.parse.urlparse(url).path.lower()
+    for kw in ("contact",):
+        if kw in path:
+            return "contact"
+    for kw in ("service", "solution", "expertise", "offering"):
+        if kw in path:
+            return "services"
+    for kw in ("portfolio", "projects", "work", "gallery"):
+        if kw in path:
+            return "portfolio"
+    for kw in ("about", "studio", "firm"):
+        if kw in path:
+            return "about"
+    for kw in ("team", "people", "leadership", "founders", "principal"):
+        if kw in path:
+            return "team"
+    return "homepage"
+
 
 
 # ─── Main extraction entry point ─────────────────────────────────────────────
