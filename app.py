@@ -20,7 +20,8 @@ sys.path.insert(0, str(ROOT))
 
 from database import db
 from services.company_service import (
-    run_scrape, export_csv, get_leads, export_leads_csv, export_leads_excel
+    run_scrape, export_csv, get_leads, export_leads_csv, export_leads_excel,
+    find_and_extract_company_lead
 )
 from scraper.validator import URLValidationError, validate_url, normalise_domain
 from scraper.fetcher import fetch, discover_internal_pages, get_session
@@ -269,12 +270,57 @@ hr { border-color: rgba(255,255,255,0.06) !important; }
     border-color: rgba(99, 102, 241, 0.35);
     background: rgba(255, 255, 255, 0.045);
 }
+.source-card {
+    background: rgba(15, 23, 42, 0.65);
+    border: 1px solid rgba(99, 102, 241, 0.22);
+    border-radius: 12px;
+    padding: 14px 18px;
+    margin-bottom: 12px;
+    transition: all 0.2s;
+}
+.source-card:hover {
+    border-color: rgba(99, 102, 241, 0.45);
+    background: rgba(15, 23, 42, 0.85);
+}
+.source-link-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(99, 102, 241, 0.15);
+    border: 1px solid rgba(99, 102, 241, 0.35);
+    color: #a5b4fc !important;
+    padding: 3px 10px;
+    border-radius: 6px;
+    font-size: 0.76rem;
+    font-weight: 500;
+    text-decoration: none;
+    word-break: break-all;
+}
+.source-link-badge:hover {
+    background: rgba(99, 102, 241, 0.28);
+    color: #c7d2fe !important;
+}
+.quote-snippet {
+    background: rgba(0, 0, 0, 0.25);
+    border-left: 3px solid #6366f1;
+    border-radius: 4px;
+    padding: 6px 10px;
+    font-family: monospace;
+    font-size: 0.75rem;
+    color: #cbd5e1;
+    margin-top: 6px;
+    word-break: break-word;
+}
 </style>
 """, unsafe_allow_html=True)
 
 
 # ── Session state ─────────────────────────────────────────────────────────────
 for k, v in {
+    "current_lead": None,
+    "target_company_search": "",
+    "target_city_hint": "",
+    "lead_finder_log": [],
     "intel_results": [],
     "intel_running": False,
     "scrape_log": [],
@@ -478,7 +524,7 @@ with st.sidebar:
     st.markdown("---")
     nav = st.radio(
         "Navigation",
-        ["💼 Leads", "🎯 Competitor Analyser", "📊 Dashboard", "🔍 Saved Companies", "🔬 Evidence", "⚙️ Bulk Scrape"],
+        ["🎯 Find Company Leads", "💼 Executive Leads Directory", "📊 Dashboard", "🔍 Saved Companies", "🔬 Evidence", "⚙️ Bulk Scrape"],
         label_visibility="collapsed",
     )
 

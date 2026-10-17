@@ -466,6 +466,24 @@ def _extract_team_members(soup: BeautifulSoup, source_url: str) -> list[tuple[st
                 seen_names.add(cand_name.lower())
                 team_members.append((cand_name, desig, rank, line_clean))
 
+    # 4. Narrative founder patterns: "set up by Arpan Shah", "founded by Manit Rastogi", "led by Sanjay Puri"
+    narrative_pat = re.compile(
+        r"\b(?:founded|co-founded|established|set up|started|headed|led)\s+by\s+([A-Z][A-Za-z. '\-]{2,40}(?:\s+and\s+[A-Z][A-Za-z. '\-]{2,40})?)",
+        re.IGNORECASE,
+    )
+    for m in narrative_pat.finditer(text):
+        raw_founder = m.group(1).strip()
+        names = [n.strip() for n in re.split(r"\s+and\s+", raw_founder, flags=re.I)]
+        for n in names:
+            n_clean = re.split(r"\b(?:in|on|at|during|since|with|along)\b", n, flags=re.I)[0].strip()
+            cand_name = _clean_name(n_clean)
+            if cand_name and cand_name.lower() not in seen_names:
+                seen_names.add(cand_name.lower())
+                start = max(0, m.start() - 30)
+                end = min(len(text), m.end() + 30)
+                snippet = _snippet(text[start:end])
+                team_members.append((cand_name, "Founder / Principal Architect", 1, snippet))
+
     return team_members
 
 
