@@ -705,25 +705,29 @@ def _extract_org_name_from_html(soup: BeautifulSoup, source_url: str) -> list[Ca
     dom = normalise_domain(source_url)
     candidates: list[Candidate] = []
 
-    # 1. Non-generic heading across all heading levels (h1 through h6)
-    for tag_name in ("h1", "h2", "h3", "h4", "h5", "h6"):
-        for tag in soup.find_all(tag_name):
-            text = _clean(tag.get_text(separator=" ", strip=True))
-            if not text:
-                continue
-            text_lower = text.lower().strip()
-            if (
-                3 < len(text) < 120
-                and text_lower not in _GENERIC_ORG_HEADINGS
-                and not any(text_lower.startswith(x) for x in _GENERIC_ORG_HEADINGS)
-                and text_lower not in _INVALID_NAME_WORDS
-            ):
-                candidates.append(Candidate(
-                    "org_name", text, source_url,
-                    f"<{tag_name}>{text}</{tag_name}>",
-                    "html_content",
-                ))
-                return candidates
+    path_lower = urllib.parse.urlparse(source_url).path.lower()
+    is_project_page = any(kw in path_lower for kw in ("project", "portfolio", "work", "detail", "gallery"))
+
+    # 1. Non-generic heading across all heading levels (skip on individual project detail pages)
+    if not is_project_page:
+        for tag_name in ("h1", "h2", "h3", "h4", "h5", "h6"):
+            for tag in soup.find_all(tag_name):
+                text = _clean(tag.get_text(separator=" ", strip=True))
+                if not text:
+                    continue
+                text_lower = text.lower().strip()
+                if (
+                    3 < len(text) < 120
+                    and text_lower not in _GENERIC_ORG_HEADINGS
+                    and not any(text_lower.startswith(x) for x in _GENERIC_ORG_HEADINGS)
+                    and text_lower not in _INVALID_NAME_WORDS
+                ):
+                    candidates.append(Candidate(
+                        "org_name", text, source_url,
+                        f"<{tag_name}>{text}</{tag_name}>",
+                        "html_content",
+                    ))
+                    return candidates
 
     # 2. Fall back to <title> tag brand name
     title = soup.title.string if soup.title and soup.title.string else None

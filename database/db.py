@@ -424,7 +424,7 @@ def get_leads_data(
     for c in companies:
         c_id = c["id"]
         ev_rows = conn.execute(
-            "SELECT * FROM evidence WHERE company_id = ? ORDER BY is_primary DESC, id ASC",
+            "SELECT * FROM evidence WHERE company_id = ? ORDER BY is_primary DESC, id DESC",
             (c_id,),
         ).fetchall()
 
