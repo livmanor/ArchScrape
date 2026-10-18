@@ -86,6 +86,27 @@ class SeedCSVSource(DiscoverySource):
                 yield DiscoveredURL(url=url, category=category, source="seed_csv")
 
 
+class FirecrawlDiscoverySource(DiscoverySource):
+    """
+    Discover company URLs dynamically via Firecrawl search.
+    """
+
+    def __init__(self, query: str = "top architecture interior design studios India", limit: int = 20) -> None:
+        self.query = query
+        self.limit = limit
+
+    def discover(self) -> Iterator[DiscoveredURL]:
+        try:
+            from scraper.firecrawl_client import is_available, firecrawl_search
+            if not is_available():
+                return
+            hits = firecrawl_search(self.query, limit=self.limit, scrape_content=False)
+            for hit in hits:
+                yield DiscoveredURL(url=hit.url, category="architecture", source="firecrawl_search")
+        except Exception as exc:
+            logger.warning("Firecrawl discovery error for '%s': %s", self.query, exc)
+
+
 class DiscoveryEngine:
     """
     Orchestrates multiple discovery sources and deduplicates by URL.
@@ -104,3 +125,4 @@ class DiscoveryEngine:
                     results.append(item)
         logger.info("Discovery complete: %d unique URLs from %d source(s).", len(results), len(self.sources))
         return results
+

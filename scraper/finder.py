@@ -258,6 +258,10 @@ def _probe_domain_slugs(company_name: str) -> Optional[dict]:
                         headers=BROWSER_HEADERS,
                     )
                     if resp.status_code < 400 and resp.url:
+                        final_lower = resp.url.lower()
+                        # Ignore domain parking and auction landers
+                        if any(broker in final_lower for broker in ["daaz.", "dan.", "sedo.", "afternic.", "godaddy.", "hugedomains.", "parking", "for-sale"]):
+                            continue
                         clean_url = validate_url(resp.url)
                         return {
                             "url": clean_url,
@@ -463,7 +467,42 @@ def resolve_company_url(
             "notes": csv_res["notes"],
         }
 
-    # ── 4. Intelligent live domain probe ─────────────────────────────────────
+    # ── 4. Firecrawl AI Search (PRIMARY Live Resolver) ─────────────────────────
+    try:
+        from scraper.firecrawl_client import is_available as fc_available, firecrawl_search
+        if fc_available():
+            log(f"🔥 Searching live web with Firecrawl for '{query}'...")
+            fc_hits = firecrawl_search(
+                f"{query} architecture interior design official website",
+                limit=3,
+                scrape_content=False,
+            )
+            for hit in fc_hits:
+                u_lower = hit.url.lower()
+                # Skip social networks, search engines, and domain sellers
+                if any(skip in u_lower for skip in [
+                    "google.", "bing.", "yahoo.", "wikipedia.",
+                    "facebook.", "instagram.", "linkedin.", "twitter.", "x.com",
+                    "daaz.", "dan.", "sedo.", "afternic.", "godaddy.", "youtube."
+                ]):
+                    continue
+                try:
+                    clean = validate_url(hit.url)
+                    log(f"✅ Discovered official website via Firecrawl: {clean} ({hit.title})")
+                    return {
+                        "found": True,
+                        "query": query,
+                        "url": clean,
+                        "domain": normalise_domain(clean),
+                        "source": "firecrawl_ai_search",
+                        "notes": f"Resolved via Firecrawl: {hit.title or hit.url}",
+                    }
+                except URLValidationError:
+                    continue
+    except Exception as fc_err:
+        logger.debug("Firecrawl resolution error for '%s': %s", query, fc_err)
+
+    # ── 5. Intelligent live domain probe (fallback) ──────────────────────────
     log(f"⚡ Testing live domain variations for '{query}'...")
     probe_res = _probe_domain_slugs(query)
     if probe_res:
