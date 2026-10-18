@@ -2,7 +2,9 @@
 scraper/fetcher.py — Safe HTTP fetching with robots.txt compliance.
 
 Features:
-- robots.txt check before every fetch
+- Firecrawl-powered fetch (primary, when API key is set) for JS-heavy sites,
+  bot-protected pages, and cleaner markdown extraction
+- robots.txt check before every classic fetch
 - Redirect chain validation (re-checks SSRF on each hop)
 - Configurable timeout and response-size limits
 - Per-domain rate limiting
@@ -167,11 +169,48 @@ def _fetch_playwright(url: str, timeout_ms: int = 25000) -> Optional[str]:
         return None
 
 
+def _firecrawl_fetch_result(url: str) -> Optional["FetchResult"]:
+    """
+    Attempt to fetch `url` via Firecrawl.
+    Returns a populated FetchResult on success, None if Firecrawl is unavailable
+    or the fetch fails (allowing the caller to fall back to classic fetch).
+    """
+    try:
+        from scraper.firecrawl_client import is_available, firecrawl_fetch
+        if not is_available():
+            return None
+        logger.info("[Firecrawl] Fetching %s", url)
+        fc = firecrawl_fetch(url)
+        if fc["ok"]:
+            html = fc["html"] or ""
+            # Prefer rich HTML; fall back to markdown wrapped in <body> so
+            # downstream BeautifulSoup parsers still work
+            if not html and fc["markdown"]:
+                html = f"<html><body>{fc['markdown']}</body></html>"
+            return FetchResult(
+                url=fc["url"],
+                original_url=url,
+                status_code=200,
+                content_type="text/html",
+                html=html,
+            )
+        else:
+            logger.warning("[Firecrawl] Failed for %s: %s", url, fc.get("error"))
+            return None
+    except Exception as exc:
+        logger.warning("[Firecrawl] Unexpected error for %s: %s", url, exc)
+        return None
+
+
 def fetch(url: str, *, session: Optional[requests.Session] = None, skip_robots: bool = False) -> FetchResult:
     """
     Fetch a URL safely.
 
-    Checks:
+    When a Firecrawl API key is configured, Firecrawl is tried first because it
+    handles JS rendering, bot-protection, and returns clean content.  The classic
+    requests+playwright pipeline is used as a fallback.
+
+    Checks (classic path):
     1. URL validation (SSRF protection, scheme)
     2. robots.txt compliance
     3. HTTP fetch with timeout + size limit
@@ -179,6 +218,12 @@ def fetch(url: str, *, session: Optional[requests.Session] = None, skip_robots: 
 
     Returns a FetchResult (ok=False on any error).
     """
+    # ── Try Firecrawl first ──────────────────────────────────────────────────
+    fc_result = _firecrawl_fetch_result(url)
+    if fc_result is not None:
+        return fc_result
+
+    # ── Classic requests-based fetch (fallback) ──────────────────────────────
     sess = session or get_session()
 
     # 1. Validate input URL

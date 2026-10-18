@@ -327,6 +327,10 @@ for k, v in {
     "active_intel_idx": None,
     "intel_urls_input": "",
     "intel_city": "Ahmedabad",
+    "firecrawl_api_key": "",
+    "fc_search_results": [],
+    "fc_search_query": "",
+    "fc_search_running": False,
 }.items():
     if k not in st.session_state:
         st.session_state[k] = v
@@ -524,7 +528,7 @@ with st.sidebar:
     st.markdown("---")
     nav = st.radio(
         "Navigation",
-        ["🎯 Find Company Leads", "💼 Executive Leads Directory", "📊 Dashboard", "🔍 Saved Companies", "🔬 Evidence", "⚙️ Bulk Scrape"],
+        ["🎯 Find Company Leads", "💼 Executive Leads Directory", "📊 Dashboard", "🔍 Saved Companies", "🔬 Evidence", "⚙️ Bulk Scrape", "🔥 AI Search (Firecrawl)"],
         label_visibility="collapsed",
     )
 
@@ -549,6 +553,43 @@ with st.sidebar:
         """, unsafe_allow_html=True)
     except Exception:
         pass
+
+    st.markdown("---")
+
+    # ── Firecrawl API Key ──────────────────────────────────────────────────────
+    with st.expander("🔥 Firecrawl Settings", expanded=False):
+        try:
+            from scraper.firecrawl_client import is_available
+            fc_active = is_available()
+        except Exception:
+            fc_active = False
+
+        if fc_active:
+            st.markdown(
+                "<div style='background:rgba(16,185,129,0.12);border:1px solid rgba(16,185,129,0.3);"
+                "border-radius:8px;padding:6px 10px;font-size:0.78rem;color:#34d399;margin-bottom:8px'>"
+                "✅ Firecrawl Active — enhanced fetching &amp; AI search enabled"
+                "</div>", unsafe_allow_html=True
+            )
+        else:
+            st.markdown(
+                "<div style='background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.25);"
+                "border-radius:8px;padding:6px 10px;font-size:0.78rem;color:#fbbf24;margin-bottom:8px'>"
+                "⚠️ Firecrawl not active — using classic fetcher"
+                "</div>", unsafe_allow_html=True
+            )
+
+        fc_key = st.text_input(
+            "API Key",
+            value=st.session_state.get("firecrawl_api_key", ""),
+            type="password",
+            placeholder="fc-xxxxxxxxxxxxxxxx",
+            key="_fc_key_input",
+            help="Get your free key at firecrawl.dev. Key is stored only in this session.",
+        )
+        if st.button("✔ Apply Key", key="_fc_apply_key", use_container_width=True):
+            st.session_state["firecrawl_api_key"] = fc_key.strip()
+            st.rerun()
 
     st.markdown("---")
     st.markdown(
@@ -1964,3 +2005,213 @@ elif nav == "⚙️ Bulk Scrape":
             st.info("No runs yet.")
     except Exception as exc:
         st.error(str(exc))
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PAGE: 🔥 AI Search (Firecrawl)
+# ═══════════════════════════════════════════════════════════════════════════════
+elif nav == "🔥 AI Search (Firecrawl)":
+    from scraper.firecrawl_client import is_available as fc_available, firecrawl_search, SearchHit
+
+    # ── Header ────────────────────────────────────────────────────────────────
+    st.markdown("""
+    <div style='background:linear-gradient(135deg,rgba(251,63,0,0.10) 0%,rgba(239,68,68,0.06) 100%);
+                border:1px solid rgba(251,63,0,0.25);border-radius:20px;padding:28px 32px;margin-bottom:24px'>
+        <div style='font-family:Space Grotesk,sans-serif;font-size:1.6rem;font-weight:700;
+                    background:linear-gradient(135deg,#fb923c 0%,#f43f5e 100%);
+                    -webkit-background-clip:text;-webkit-text-fill-color:transparent'>
+            🔥 AI-Powered Firm Discovery
+        </div>
+        <div style='color:#64748b;font-size:0.9rem;margin-top:6px'>
+            Powered by <strong style='color:#fb923c'>Firecrawl</strong> — search the live web for
+            architecture &amp; interior design firms, instantly scrape their pages, and pull verified
+            intelligence into the platform.
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── API key gate ──────────────────────────────────────────────────────────
+    if not fc_available():
+        st.markdown("""
+        <div style='background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.3);
+                    border-radius:14px;padding:28px 32px;text-align:center'>
+            <div style='font-size:2.5rem'>🔑</div>
+            <div style='font-family:Space Grotesk,sans-serif;font-size:1.1rem;font-weight:600;
+                        color:#fbbf24;margin:10px 0 6px'>Firecrawl API Key Required</div>
+            <div style='color:#94a3b8;font-size:0.88rem;max-width:480px;margin:0 auto 16px'>
+                To use AI-powered firm discovery, paste your Firecrawl API key in the
+                <strong>🔥 Firecrawl Settings</strong> panel in the left sidebar.
+                Get a free key at
+                <a href='https://www.firecrawl.dev' target='_blank'
+                   style='color:#fb923c;text-decoration:none'>firecrawl.dev</a>.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        # ── Search input panel ────────────────────────────────────────────────
+        st.markdown('<div class="input-card">', unsafe_allow_html=True)
+        st.markdown('<div class="input-card-title">🔍 Discover Firms via Live Web Search</div>',
+                    unsafe_allow_html=True)
+
+        # Quick preset queries
+        st.markdown(
+            "<div style='font-size:0.8rem;color:#94a3b8;margin-bottom:8px'>"
+            "⚡ <strong>Quick Searches:</strong></div>",
+            unsafe_allow_html=True
+        )
+        _qs_cols = st.columns(5)
+        _presets = [
+            ("🏙️ Pune Firms",        "top architecture firms in Pune India"),
+            ("🏙️ Hyderabad Firms",   "best architecture firms in Hyderabad India"),
+            ("🏙️ Bengaluru Firms",   "leading architecture design studios Bengaluru"),
+            ("🏙️ Kolkata Firms",     "top interior design architecture firms Kolkata"),
+            ("🏠 Interior Studios",  "top interior design studios India"),
+        ]
+        for col, (label, preset_q) in zip(_qs_cols, _presets):
+            with col:
+                if st.button(label, use_container_width=True, key=f"fc_preset_{label}"):
+                    st.session_state["fc_search_query"] = preset_q
+                    st.session_state["fc_search_results"] = []
+                    st.rerun()
+
+        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+
+        q_col, limit_col, btn_col = st.columns([4, 1.2, 1.2])
+        with q_col:
+            fc_query = st.text_input(
+                "🔍 Search Query",
+                value=st.session_state.get("fc_search_query", ""),
+                placeholder="e.g. top architecture firms in Pune India 2024",
+                key="fc_query_input",
+            )
+        with limit_col:
+            fc_limit = st.selectbox(
+                "Results",
+                [5, 10, 15, 20],
+                index=1,
+                key="fc_limit_sel",
+            )
+        with btn_col:
+            st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+            fc_search_btn = st.button(
+                "🚀 Search", type="primary", use_container_width=True, key="fc_search_go"
+            )
+
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        # ── Run search ────────────────────────────────────────────────────────
+        if fc_search_btn and fc_query.strip():
+            with st.spinner("🔥 Searching the live web with Firecrawl…"):
+                hits = firecrawl_search(
+                    fc_query.strip(),
+                    limit=int(fc_limit),
+                    scrape_content=True,
+                )
+            st.session_state["fc_search_results"] = hits
+            st.session_state["fc_search_query"] = fc_query.strip()
+            st.rerun()
+
+        # ── Display results ───────────────────────────────────────────────────
+        hits: list[SearchHit] = st.session_state.get("fc_search_results", [])
+        current_q = st.session_state.get("fc_search_query", "")
+
+        if hits:
+            st.markdown(
+                f"<div style='font-size:0.85rem;color:#64748b;margin-bottom:16px'>"
+                f"Found <strong style='color:#fb923c'>{len(hits)}</strong> results for "
+                f"<em>\"{current_q}\"</em></div>",
+                unsafe_allow_html=True,
+            )
+
+            for idx, hit in enumerate(hits):
+                domain_tag = hit.url.split("/")[2] if hit.url.startswith("http") else hit.url
+
+                # Preview snippet from scraped markdown
+                snippet = ""
+                if hit.markdown:
+                    lines = [l.strip() for l in hit.markdown.splitlines() if l.strip() and not l.startswith("#")]
+                    snippet = " ".join(lines[:6])[:360]
+
+                st.markdown(f"""
+                <div style='background:rgba(255,255,255,0.03);border:1px solid rgba(251,63,0,0.18);
+                            border-radius:14px;padding:20px 24px;margin-bottom:14px;
+                            transition:all 0.2s' onmouseover="this.style.borderColor='rgba(251,63,0,0.45)'"
+                            onmouseout="this.style.borderColor='rgba(251,63,0,0.18)'">
+                    <div style='display:flex;justify-content:space-between;align-items:flex-start;gap:12px'>
+                        <div style='flex:1'>
+                            <div style='font-family:Space Grotesk,sans-serif;font-size:1.05rem;
+                                        font-weight:600;color:#e2e8f0;margin-bottom:4px'>
+                                {hit.title or domain_tag}
+                            </div>
+                            <div style='display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap'>
+                                <span style='font-size:0.78rem;color:#fb923c;background:rgba(251,63,0,0.1);
+                                             padding:2px 10px;border-radius:999px;border:1px solid rgba(251,63,0,0.2)'>
+                                    🌐 {domain_tag}
+                                </span>
+                                {'<span style="font-size:0.78rem;color:#34d399;background:rgba(16,185,129,0.1);padding:2px 10px;border-radius:999px;border:1px solid rgba(16,185,129,0.2)">✓ Content Scraped</span>' if hit.markdown else ''}
+                            </div>
+                            <div style='font-size:0.84rem;color:#94a3b8;line-height:1.55'>
+                                {hit.description or snippet[:200] or "<em style='color:#475569'>No description available.</em>"}
+                            </div>
+                            {f'<div style="margin-top:8px;background:rgba(0,0,0,0.2);border-left:3px solid rgba(251,63,0,0.4);border-radius:4px;padding:6px 10px;font-size:0.78rem;color:#94a3b8;font-family:monospace;word-break:break-word">{snippet[:280]}…</div>' if snippet and not hit.description else ''}
+                        </div>
+                        <a href='{hit.url}' target='_blank'
+                           style='background:rgba(251,63,0,0.15);border:1px solid rgba(251,63,0,0.35);
+                                  color:#fb923c;padding:8px 14px;border-radius:8px;text-decoration:none;
+                                  font-size:0.8rem;font-weight:600;white-space:nowrap;
+                                  display:inline-flex;align-items:center;gap:4px'>
+                            Visit ↗
+                        </a>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                # ── Scrape & Import button ─────────────────────────────────────
+                btn_key = f"fc_import_{idx}_{domain_tag}"
+                if st.button(
+                    f"⚡ Scrape & Import to Leads — {domain_tag}",
+                    key=btn_key,
+                    help="Use the full scraping pipeline to extract contacts, owner, org size etc. and save to the database.",
+                ):
+                    with st.spinner(f"🔥 Scraping {hit.url} via Firecrawl…"):
+                        try:
+                            imported = find_and_extract_company_lead(
+                                target_input=hit.url,
+                                db_path=DB_PATH,
+                                category="architecture",
+                                market_city="",
+                            )
+                            if imported and imported.get("ok"):
+                                st.success(
+                                    f"✅ **{imported.get('organisation', domain_tag)}** imported to Leads Directory!"
+                                )
+                            else:
+                                st.warning(
+                                    f"⚠️ Scraped but limited data found for {domain_tag}. "
+                                    f"Check Leads Directory."
+                                )
+                        except Exception as _exc:
+                            st.error(f"Import failed: {_exc}")
+
+        elif current_q:
+            st.markdown("""
+            <div style='text-align:center;padding:40px 20px;color:#334155'>
+                <div style='font-size:3rem'>🔍</div>
+                <div style='color:#64748b;margin-top:12px'>No results returned. Try a different query.</div>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown("""
+            <div style='text-align:center;padding:50px 20px;color:#334155'>
+                <div style='font-size:3.5rem'>🔥</div>
+                <div style='font-family:Space Grotesk,sans-serif;font-size:1.2rem;font-weight:600;
+                            color:#94a3b8;margin-top:12px'>
+                    Search the live web for architecture firms
+                </div>
+                <div style='font-size:0.88rem;color:#475569;margin-top:8px;max-width:480px;
+                            margin-left:auto;margin-right:auto'>
+                    Enter a query like <em>"top architecture firms in Pune India"</em> and Firecrawl
+                    will search the web, scrape results, and let you import them directly.
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
