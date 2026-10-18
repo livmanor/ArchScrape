@@ -331,6 +331,8 @@ for k, v in {
     "fc_search_results": [],
     "fc_search_query": "",
     "fc_search_running": False,
+    "fc_search_error": None,
+
 }.items():
     if k not in st.session_state:
         st.session_state[k] = v
@@ -559,7 +561,7 @@ with st.sidebar:
     # ── Firecrawl API Key ──────────────────────────────────────────────────────
     with st.expander("🔥 Firecrawl Settings", expanded=False):
         try:
-            from scraper.firecrawl_client import is_available
+            from scraper.firecrawl_client import is_available, test_firecrawl_connection
             fc_active = is_available()
         except Exception:
             fc_active = False
@@ -587,9 +589,24 @@ with st.sidebar:
             key="_fc_key_input",
             help="Get your free key at firecrawl.dev. Key is stored only in this session.",
         )
-        if st.button("✔ Apply Key", key="_fc_apply_key", use_container_width=True):
-            st.session_state["firecrawl_api_key"] = fc_key.strip()
-            st.rerun()
+        c_btn1, c_btn2 = st.columns(2)
+        with c_btn1:
+            if st.button("✔ Apply", key="_fc_apply_key", use_container_width=True):
+                st.session_state["firecrawl_api_key"] = fc_key.strip()
+                st.rerun()
+        with c_btn2:
+            if st.button("🧪 Test", key="_fc_test_key", use_container_width=True):
+                test_k = fc_key.strip() or st.session_state.get("firecrawl_api_key", "")
+                if not test_k:
+                    st.warning("Please enter a key first.")
+                else:
+                    with st.spinner("Testing API key..."):
+                        t_ok, t_msg = test_firecrawl_connection(test_k)
+                        if t_ok:
+                            st.session_state["firecrawl_api_key"] = test_k
+                            st.success(t_msg)
+                        else:
+                            st.error(t_msg)
 
     st.markdown("---")
     st.markdown(
@@ -1867,151 +1884,14 @@ elif nav == "🔍 Saved Companies":
                                    file_name="archscale_saved.csv", mime="text/csv")
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# PAGE: Evidence Inspector
-# ═══════════════════════════════════════════════════════════════════════════════
-elif nav == "🔬 Evidence":
-    st.markdown("#### Field-Level Evidence Inspector")
-    st.caption("Every value has a traceable source URL and extraction timestamp.")
-
-    try:
-        with db.get_connection(DB_PATH) as conn:
-            companies = db.list_companies(conn)
-    except Exception:
-        companies = []
-
-    if not companies:
-        st.info("No companies saved. Run the Competitor Analyser and save results first.")
-    else:
-        options = [f"{c['org_name'] or c['domain_key']} ({c['domain_key']})" for c in companies]
-        cmap = {f"{c['org_name'] or c['domain_key']} ({c['domain_key']})": c for c in companies}
-        sel = st.selectbox("Company", ["— select —"] + options)
-
-        if sel and sel != "— select —":
-            comp = cmap[sel]
-            try:
-                with db.get_connection(DB_PATH) as conn:
-                    evidence = db.get_evidence_for_company(conn, comp["id"])
-            except Exception as exc:
-                st.error(str(exc))
-                evidence = []
-
-            fields: dict[str, list] = {}
-            for ev in evidence:
-                fields.setdefault(ev["field_name"], []).append(ev)
-
-            for field_name, rows in fields.items():
-                with st.expander(f"**{field_name}** ({len(rows)} candidate(s))"):
-                    for ev in rows:
-                        status = ev["verification_status"]
-                        val    = ev["extracted_value"] or "*Not found*"
-                        src    = ev["source_url"]
-                        ts     = (ev["extracted_at"] or "")[:19].replace("T", " ")
-                        st.markdown(
-                            f"**Value:** `{val}`  \n"
-                            f"**Source:** [{src[:70]}]({src})  \n"
-                            f"**Method:** {ev['extraction_method'] or '—'}  \n"
-                            f"**Status:** `{status}`  \n"
-                            f"**Extracted:** {ts}",
-                        )
-                        if ev["supporting_text"]:
-                            with st.expander("Supporting text"):
-                                st.code(ev["supporting_text"][:800])
-
-                        new_status = st.selectbox(
-                            "Update status",
-                            ["Extracted","Source checked","Cross-verified","Not found","Needs review"],
-                            index=["Extracted","Source checked","Cross-verified","Not found","Needs review"].index(status)
-                            if status in ["Extracted","Source checked","Cross-verified","Not found","Needs review"] else 0,
-                            key=f"ev_status_{ev['id']}",
-                        )
-                        note = st.text_input("Note", key=f"ev_note_{ev['id']}")
-                        if st.button("Save", key=f"ev_save_{ev['id']}"):
-                            try:
-                                with db.get_connection(DB_PATH) as conn:
-                                    db.update_evidence_status(conn, ev["id"], new_status, note or None, _now())
-                                st.success("Saved")
-                                st.rerun()
-                            except Exception as exc:
-                                st.error(str(exc))
-                        st.markdown("---")
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# PAGE: Bulk Scrape (seed CSV based)
-# ═══════════════════════════════════════════════════════════════════════════════
-elif nav == "⚙️ Bulk Scrape":
-    st.markdown("#### Bulk Scrape from Approved URL List")
-    st.caption("Scrape multiple companies from `data/seed_urls.csv` and save all results to the database.")
-
-    col_s, col_i = st.columns([2, 1])
-    with col_s:
-        st.markdown("**Current Seed List** (`data/seed_urls.csv`)")
-        if SEED_CSV.exists():
-            try:
-                df_seed = pd.read_csv(SEED_CSV)
-                st.dataframe(df_seed, use_container_width=True, height=250)
-                st.caption(f"{len(df_seed)} URL(s)")
-            except Exception as exc:
-                st.error(str(exc))
-        else:
-            st.warning("seed_urls.csv not found.")
-
-    with col_i:
-        st.markdown("**Upload additional URLs**")
-        upl = st.file_uploader("CSV (url, category, notes)", type=["csv"])
-        if upl:
-            try:
-                new_df = pd.read_csv(upl)
-                if "url" not in new_df.columns:
-                    st.error("CSV must have a 'url' column.")
-                else:
-                    existing = pd.read_csv(SEED_CSV) if SEED_CSV.exists() else pd.DataFrame(columns=["url","category","notes"])
-                    merged = pd.concat([existing, new_df]).drop_duplicates(subset=["url"])
-                    merged.to_csv(SEED_CSV, index=False)
-                    st.success(f"Merged. {len(merged)} total URL(s).")
-                    st.rerun()
-            except Exception as exc:
-                st.error(str(exc))
-
-    st.markdown("---")
-    if st.button("🚀 Start Bulk Scrape", type="primary"):
-        log_box = st.empty()
-        log_lines: list[str] = []
-
-        def log(msg):
-            log_lines.append(msg)
-            log_box.text_area("Log", value="\n".join(log_lines[-25:]), height=260, disabled=True, key="bulk_log")
-
-        try:
-            result = run_scrape(seed_csv_path=SEED_CSV, db_path=DB_PATH, progress_callback=log)
-            st.success(f"✅ Run #{result['run_id']}: {result['urls_succeeded']}/{result['urls_attempted']} succeeded.")
-            if result["errors"]:
-                with st.expander(f"⚠️ {len(result['errors'])} error(s)"):
-                    for e in result["errors"]:
-                        st.markdown(f"- `{e['url']}` — {e['error']}: {e.get('detail','')}")
-        except Exception as exc:
-            st.error(f"Scrape failed: {exc}")
-            logger.exception("Bulk scrape failed")
-
-    st.markdown("---")
-    st.markdown("#### Run History")
-    try:
-        with db.get_connection(DB_PATH) as conn:
-            runs = conn.execute("SELECT * FROM scrape_runs ORDER BY id DESC LIMIT 10").fetchall()
-        if runs:
-            st.dataframe(pd.DataFrame([dict(r) for r in runs]), use_container_width=True)
-        else:
-            st.info("No runs yet.")
-    except Exception as exc:
-        st.error(str(exc))
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# PAGE: 🔥 AI Search (Firecrawl)
-# ═══════════════════════════════════════════════════════════════════════════════
-elif nav == "🔥 AI Search (Firecrawl)":
-    from scraper.firecrawl_client import is_available as fc_available, firecrawl_search, SearchHit
+# ════════════════════════════════════════════════════════════════elif nav == "🔥 AI Search (Firecrawl)":
+    from scraper.firecrawl_client import (
+        is_available as fc_available,
+        firecrawl_search,
+        search_local_directory,
+        test_firecrawl_connection,
+        SearchHit,
+    )
 
     # ── Header ────────────────────────────────────────────────────────────────
     st.markdown("""
@@ -2023,195 +1903,304 @@ elif nav == "🔥 AI Search (Firecrawl)":
             🔥 AI-Powered Firm Discovery
         </div>
         <div style='color:#64748b;font-size:0.9rem;margin-top:6px'>
-            Powered by <strong style='color:#fb923c'>Firecrawl</strong> — search the live web for
-            architecture &amp; interior design firms, instantly scrape their pages, and pull verified
-            intelligence into the platform.
+            Search the live web for architecture &amp; interior design studios, extract leads, and pull verified
+            firm profiles into your database using <strong style='color:#fb923c'>Firecrawl</strong>.
         </div>
     </div>
     """, unsafe_allow_html=True)
 
-    # ── API key gate ──────────────────────────────────────────────────────────
-    if not fc_available():
+    has_fc = fc_available()
+
+    # ── Inline API Key Configuration if Not Configured ────────────────────────
+    if not has_fc:
         st.markdown("""
         <div style='background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.3);
-                    border-radius:14px;padding:28px 32px;text-align:center'>
-            <div style='font-size:2.5rem'>🔑</div>
+                    border-radius:14px;padding:24px;margin-bottom:20px'>
             <div style='font-family:Space Grotesk,sans-serif;font-size:1.1rem;font-weight:600;
-                        color:#fbbf24;margin:10px 0 6px'>Firecrawl API Key Required</div>
-            <div style='color:#94a3b8;font-size:0.88rem;max-width:480px;margin:0 auto 16px'>
-                To use AI-powered firm discovery, paste your Firecrawl API key in the
-                <strong>🔥 Firecrawl Settings</strong> panel in the left sidebar.
-                Get a free key at
-                <a href='https://www.firecrawl.dev' target='_blank'
-                   style='color:#fb923c;text-decoration:none'>firecrawl.dev</a>.
+                        color:#fbbf24;margin-bottom:6px'>🔑 Firecrawl API Key Required for Live Web Search</div>
+            <div style='color:#94a3b8;font-size:0.88rem;line-height:1.5;margin-bottom:14px'>
+                Live web search uses <strong>Firecrawl</strong> to search and extract live websites.
+                Get a free key (500 free credits) at
+                <a href='https://www.firecrawl.dev' target='_blank' style='color:#fb923c;font-weight:600;text-decoration:none'>firecrawl.dev</a>,
+                or use our pre-compiled <strong>Curated Directory</strong> of 300+ verified Indian architecture firms below.
             </div>
         </div>
         """, unsafe_allow_html=True)
-    else:
-        # ── Search input panel ────────────────────────────────────────────────
-        st.markdown('<div class="input-card">', unsafe_allow_html=True)
-        st.markdown('<div class="input-card-title">🔍 Discover Firms via Live Web Search</div>',
-                    unsafe_allow_html=True)
 
-        # Quick preset queries
-        st.markdown(
-            "<div style='font-size:0.8rem;color:#94a3b8;margin-bottom:8px'>"
-            "⚡ <strong>Quick Searches:</strong></div>",
-            unsafe_allow_html=True
-        )
-        _qs_cols = st.columns(5)
-        _presets = [
-            ("🏙️ Pune Firms",        "top architecture firms in Pune India"),
-            ("🏙️ Hyderabad Firms",   "best architecture firms in Hyderabad India"),
-            ("🏙️ Bengaluru Firms",   "leading architecture design studios Bengaluru"),
-            ("🏙️ Kolkata Firms",     "top interior design architecture firms Kolkata"),
-            ("🏠 Interior Studios",  "top interior design studios India"),
-        ]
-        for col, (label, preset_q) in zip(_qs_cols, _presets):
-            with col:
-                if st.button(label, use_container_width=True, key=f"fc_preset_{label}"):
-                    st.session_state["fc_search_query"] = preset_q
-                    st.session_state["fc_search_results"] = []
+        k_col1, k_col2, k_col3 = st.columns([3, 1, 1])
+        with k_col1:
+            page_key = st.text_input(
+                "Paste Firecrawl API Key",
+                type="password",
+                placeholder="fc-xxxxxxxxxxxxxxxx",
+                key="fc_page_key_input",
+                label_visibility="collapsed",
+            )
+        with k_col2:
+            if st.button("✔ Connect Key", type="primary", use_container_width=True, key="fc_page_save_key"):
+                if page_key.strip():
+                    st.session_state["firecrawl_api_key"] = page_key.strip()
+                    st.success("API key saved! Reloading...")
                     st.rerun()
+                else:
+                    st.warning("Please paste a key.")
+        with k_col3:
+            if st.button("🧪 Test Key", use_container_width=True, key="fc_page_test_key"):
+                if page_key.strip():
+                    with st.spinner("Testing API key with Firecrawl..."):
+                        t_ok, t_msg = test_firecrawl_connection(page_key.strip())
+                        if t_ok:
+                            st.session_state["firecrawl_api_key"] = page_key.strip()
+                            st.success(t_msg)
+                            st.rerun()
+                        else:
+                            st.error(t_msg)
+                else:
+                    st.warning("Please enter a key to test.")
 
-        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+    # ── Search Input Panel ───────────────────────────────────────────────────
+    st.markdown('<div class="input-card">', unsafe_allow_html=True)
+    st.markdown('<div class="input-card-title">🔍 Discover Firms via Search</div>', unsafe_allow_html=True)
 
-        q_col, limit_col, btn_col = st.columns([4, 1.2, 1.2])
-        with q_col:
-            fc_query = st.text_input(
-                "🔍 Search Query",
-                value=st.session_state.get("fc_search_query", ""),
-                placeholder="e.g. top architecture firms in Pune India 2024",
-                key="fc_query_input",
+    # Quick preset queries
+    st.markdown(
+        "<div style='font-size:0.8rem;color:#94a3b8;margin-bottom:8px'>"
+        "⚡ <strong>Quick Searches:</strong></div>",
+        unsafe_allow_html=True
+    )
+    _qs_cols = st.columns(6)
+    _presets = [
+        ("🏙️ Delhi Firms",      "top architecture firms in Delhi India"),
+        ("🏙️ Bengaluru Firms",  "leading architecture design studios Bengaluru"),
+        ("🏙️ Mumbai Firms",     "best architecture firms in Mumbai"),
+        ("🏙️ Pune Firms",       "top architecture studios Pune"),
+        ("🏙️ Hyderabad Firms",  "best architecture firms in Hyderabad"),
+        ("🏠 Interior Studios", "top interior design studios India"),
+    ]
+    for col, (label, preset_q) in zip(_qs_cols, _presets):
+        with col:
+            if st.button(label, use_container_width=True, key=f"fc_preset_{label}"):
+                st.session_state["fc_search_query"] = preset_q
+                st.session_state["fc_search_results"] = []
+                st.session_state["fc_search_error"] = None
+                st.rerun()
+
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+
+    q_col, mode_col, limit_col, btn_col = st.columns([3.5, 1.6, 1.1, 1.2])
+    with q_col:
+        fc_query = st.text_input(
+            "Search Query",
+            value=st.session_state.get("fc_search_query", ""),
+            placeholder="e.g. Cheap and best architecture firms in Delhi 2026",
+            key="fc_query_input",
+            label_visibility="collapsed",
+        )
+    with mode_col:
+        search_engine = st.selectbox(
+            "Search Engine",
+            options=["🔥 Firecrawl (Live Web)", "📚 Curated Directory (Offline)"],
+            index=0 if has_fc else 1,
+            key="fc_search_engine_mode",
+            label_visibility="collapsed",
+        )
+    with limit_col:
+        fc_limit = st.selectbox(
+            "Limit",
+            [5, 10, 15, 20],
+            index=1,
+            key="fc_limit_sel",
+            label_visibility="collapsed",
+        )
+    with btn_col:
+        fc_search_btn = st.button(
+            "🚀 Search", type="primary", use_container_width=True, key="fc_search_go"
+        )
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    # ── Run search ────────────────────────────────────────────────────────────
+    if fc_search_btn and fc_query.strip():
+        st.session_state["fc_search_error"] = None
+        use_firecrawl = "Firecrawl" in search_engine
+
+        if use_firecrawl and not fc_available():
+            st.session_state["fc_search_error"] = (
+                "Firecrawl API key is missing. Please enter and connect your API key above, "
+                "or select 'Curated Directory (Offline)' to search without an API key."
             )
-        with limit_col:
-            fc_limit = st.selectbox(
-                "Results",
-                [5, 10, 15, 20],
-                index=1,
-                key="fc_limit_sel",
-            )
-        with btn_col:
-            st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
-            fc_search_btn = st.button(
-                "🚀 Search", type="primary", use_container_width=True, key="fc_search_go"
-            )
-
-        st.markdown("</div>", unsafe_allow_html=True)
-
-        # ── Run search ────────────────────────────────────────────────────────
-        if fc_search_btn and fc_query.strip():
-            with st.spinner("🔥 Searching the live web with Firecrawl…"):
-                hits = firecrawl_search(
-                    fc_query.strip(),
-                    limit=int(fc_limit),
-                    scrape_content=True,
-                )
-            st.session_state["fc_search_results"] = hits
+            st.session_state["fc_search_results"] = []
             st.session_state["fc_search_query"] = fc_query.strip()
             st.rerun()
 
-        # ── Display results ───────────────────────────────────────────────────
-        hits: list[SearchHit] = st.session_state.get("fc_search_results", [])
-        current_q = st.session_state.get("fc_search_query", "")
+        if use_firecrawl:
+            with st.spinner("🔥 Searching the live web with Firecrawl…"):
+                try:
+                    hits = firecrawl_search(
+                        fc_query.strip(),
+                        limit=int(fc_limit),
+                        scrape_content=True,
+                    )
+                    st.session_state["fc_search_results"] = hits
+                    st.session_state["fc_search_query"] = fc_query.strip()
+                    if not hits:
+                        # Auto-check local directory as suggestion
+                        local_hits = search_local_directory(fc_query.strip(), limit=5)
+                        if local_hits:
+                            st.session_state["fc_local_suggestions"] = local_hits
+                        st.session_state["fc_search_error"] = (
+                            "Firecrawl returned 0 live web results for this query. "
+                            "Try broader keywords (e.g. 'architecture firms Delhi')."
+                        )
+                except Exception as _fc_exc:
+                    st.session_state["fc_search_error"] = str(_fc_exc)
+                    st.session_state["fc_search_results"] = []
+                    st.session_state["fc_search_query"] = fc_query.strip()
+                    # Offer local directory fallback
+                    local_hits = search_local_directory(fc_query.strip(), limit=int(fc_limit))
+                    if local_hits:
+                        st.session_state["fc_local_suggestions"] = local_hits
+        else:
+            with st.spinner("📚 Searching curated architecture directory…"):
+                hits = search_local_directory(fc_query.strip(), limit=int(fc_limit))
+                st.session_state["fc_search_results"] = hits
+                st.session_state["fc_search_query"] = fc_query.strip()
+                if not hits:
+                    st.session_state["fc_search_error"] = (
+                        f"No matches found in curated directory for '{fc_query.strip()}'. "
+                        f"Try searching by city name like 'Delhi', 'Mumbai', or 'Bengaluru'."
+                    )
 
-        if hits:
+        st.rerun()
+
+    # ── Display errors & fallback offer ───────────────────────────────────────
+    fc_err = st.session_state.get("fc_search_error")
+    local_suggs: list[SearchHit] = st.session_state.get("fc_local_suggestions", [])
+
+    if fc_err:
+        st.error(f"⚠️ Search Notice:\n\n{fc_err}")
+        if local_suggs and not st.session_state.get("fc_search_results"):
             st.markdown(
-                f"<div style='font-size:0.85rem;color:#64748b;margin-bottom:16px'>"
-                f"Found <strong style='color:#fb923c'>{len(hits)}</strong> results for "
-                f"<em>\"{current_q}\"</em></div>",
-                unsafe_allow_html=True,
+                f"<div style='margin-bottom:12px;font-size:0.9rem;color:#38bdf8;font-weight:600'>"
+                f"💡 We found {len(local_suggs)} matching verified firms in the curated directory for "
+                f"<em>\"{st.session_state.get('fc_search_query', '')}\"</em>:</div>",
+                unsafe_allow_html=True
+            )
+            if st.button("📂 Load Verified Directory Results", key="fc_load_suggs"):
+                st.session_state["fc_search_results"] = local_suggs
+                st.session_state["fc_local_suggestions"] = []
+                st.session_state["fc_search_error"] = None
+                st.rerun()
+
+    # ── Display results ───────────────────────────────────────────────────────
+    hits: list[SearchHit] = st.session_state.get("fc_search_results", [])
+    current_q = st.session_state.get("fc_search_query", "")
+
+    if hits:
+        st.markdown(
+            f"<div style='font-size:0.85rem;color:#64748b;margin-bottom:16px'>"
+            f"Found <strong style='color:#fb923c'>{len(hits)}</strong> results for "
+            f"<em>\"{current_q}\"</em></div>",
+            unsafe_allow_html=True,
+        )
+
+        for idx, hit in enumerate(hits):
+            domain_tag = hit.url.split("/")[2] if hit.url.startswith("http") else hit.url
+
+            snippet = ""
+            if hit.markdown:
+                lines = [l.strip() for l in hit.markdown.splitlines() if l.strip() and not l.startswith("#")]
+                snippet = " ".join(lines[:6])[:360]
+
+            is_local = getattr(hit, "source", "") == "local_directory"
+            source_badge = (
+                '<span style="font-size:0.75rem;color:#38bdf8;background:rgba(56,189,248,0.1);'
+                'padding:2px 8px;border-radius:999px;border:1px solid rgba(56,189,248,0.25)">📚 Curated Directory</span>'
+                if is_local else
+                '<span style="font-size:0.75rem;color:#fb923c;background:rgba(251,63,0,0.1);'
+                'padding:2px 8px;border-radius:999px;border:1px solid rgba(251,63,0,0.25)">🔥 Firecrawl Web</span>'
             )
 
-            for idx, hit in enumerate(hits):
-                domain_tag = hit.url.split("/")[2] if hit.url.startswith("http") else hit.url
-
-                # Preview snippet from scraped markdown
-                snippet = ""
-                if hit.markdown:
-                    lines = [l.strip() for l in hit.markdown.splitlines() if l.strip() and not l.startswith("#")]
-                    snippet = " ".join(lines[:6])[:360]
-
-                st.markdown(f"""
-                <div style='background:rgba(255,255,255,0.03);border:1px solid rgba(251,63,0,0.18);
-                            border-radius:14px;padding:20px 24px;margin-bottom:14px;
-                            transition:all 0.2s' onmouseover="this.style.borderColor='rgba(251,63,0,0.45)'"
-                            onmouseout="this.style.borderColor='rgba(251,63,0,0.18)'">
-                    <div style='display:flex;justify-content:space-between;align-items:flex-start;gap:12px'>
-                        <div style='flex:1'>
-                            <div style='font-family:Space Grotesk,sans-serif;font-size:1.05rem;
-                                        font-weight:600;color:#e2e8f0;margin-bottom:4px'>
-                                {hit.title or domain_tag}
-                            </div>
-                            <div style='display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap'>
-                                <span style='font-size:0.78rem;color:#fb923c;background:rgba(251,63,0,0.1);
-                                             padding:2px 10px;border-radius:999px;border:1px solid rgba(251,63,0,0.2)'>
-                                    🌐 {domain_tag}
-                                </span>
-                                {'<span style="font-size:0.78rem;color:#34d399;background:rgba(16,185,129,0.1);padding:2px 10px;border-radius:999px;border:1px solid rgba(16,185,129,0.2)">✓ Content Scraped</span>' if hit.markdown else ''}
-                            </div>
-                            <div style='font-size:0.84rem;color:#94a3b8;line-height:1.55'>
-                                {hit.description or snippet[:200] or "<em style='color:#475569'>No description available.</em>"}
-                            </div>
-                            {f'<div style="margin-top:8px;background:rgba(0,0,0,0.2);border-left:3px solid rgba(251,63,0,0.4);border-radius:4px;padding:6px 10px;font-size:0.78rem;color:#94a3b8;font-family:monospace;word-break:break-word">{snippet[:280]}…</div>' if snippet and not hit.description else ''}
+            st.markdown(f"""
+            <div style='background:rgba(255,255,255,0.03);border:1px solid rgba(251,63,0,0.18);
+                        border-radius:14px;padding:20px 24px;margin-bottom:14px;
+                        transition:all 0.2s' onmouseover="this.style.borderColor='rgba(251,63,0,0.45)'"
+                        onmouseout="this.style.borderColor='rgba(251,63,0,0.18)'">
+                <div style='display:flex;justify-content:space-between;align-items:flex-start;gap:12px'>
+                    <div style='flex:1'>
+                        <div style='font-family:Space Grotesk,sans-serif;font-size:1.05rem;
+                                    font-weight:600;color:#e2e8f0;margin-bottom:4px'>
+                            {hit.title or domain_tag}
                         </div>
-                        <a href='{hit.url}' target='_blank'
-                           style='background:rgba(251,63,0,0.15);border:1px solid rgba(251,63,0,0.35);
-                                  color:#fb923c;padding:8px 14px;border-radius:8px;text-decoration:none;
-                                  font-size:0.8rem;font-weight:600;white-space:nowrap;
-                                  display:inline-flex;align-items:center;gap:4px'>
-                            Visit ↗
-                        </a>
+                        <div style='display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap'>
+                            <span style='font-size:0.78rem;color:#fb923c;background:rgba(251,63,0,0.1);
+                                         padding:2px 10px;border-radius:999px;border:1px solid rgba(251,63,0,0.2)'>
+                                🌐 {domain_tag}
+                            </span>
+                            {source_badge}
+                            {'<span style="font-size:0.75rem;color:#34d399;background:rgba(16,185,129,0.1);padding:2px 8px;border-radius:999px;border:1px solid rgba(16,185,129,0.2)">✓ Content Scraped</span>' if hit.markdown else ''}
+                        </div>
+                        <div style='font-size:0.84rem;color:#94a3b8;line-height:1.55'>
+                            {hit.description or snippet[:200] or "<em style='color:#475569'>No description available.</em>"}
+                        </div>
+                        {f'<div style="margin-top:8px;background:rgba(0,0,0,0.2);border-left:3px solid rgba(251,63,0,0.4);border-radius:4px;padding:6px 10px;font-size:0.78rem;color:#94a3b8;font-family:monospace;word-break:break-word">{snippet[:280]}…</div>' if snippet and not hit.description else ''}
                     </div>
+                    <a href='{hit.url}' target='_blank'
+                       style='background:rgba(251,63,0,0.15);border:1px solid rgba(251,63,0,0.35);
+                              color:#fb923c;padding:8px 14px;border-radius:8px;text-decoration:none;
+                              font-size:0.8rem;font-weight:600;white-space:nowrap;
+                              display:inline-flex;align-items:center;gap:4px'>
+                        Visit ↗
+                    </a>
                 </div>
-                """, unsafe_allow_html=True)
+            </div>
+            """, unsafe_allow_html=True)
 
-                # ── Scrape & Import button ─────────────────────────────────────
-                btn_key = f"fc_import_{idx}_{domain_tag}"
-                if st.button(
-                    f"⚡ Scrape & Import to Leads — {domain_tag}",
-                    key=btn_key,
-                    help="Use the full scraping pipeline to extract contacts, owner, org size etc. and save to the database.",
-                ):
-                    with st.spinner(f"🔥 Scraping {hit.url} via Firecrawl…"):
-                        try:
-                            imported = find_and_extract_company_lead(
-                                target_input=hit.url,
-                                db_path=DB_PATH,
-                                category="architecture",
-                                market_city="",
+            # ── Scrape & Import button ─────────────────────────────────────────
+            btn_key = f"fc_import_{idx}_{domain_tag}"
+            if st.button(
+                f"⚡ Scrape & Import to Leads — {domain_tag}",
+                key=btn_key,
+                help="Run extraction on this firm's website and store full leadership and contact intelligence.",
+            ):
+                with st.spinner(f"Scraping {hit.url} and extracting leads…"):
+                    try:
+                        imported = find_and_extract_company_lead(
+                            target_input=hit.url,
+                            db_path=DB_PATH,
+                            category="architecture",
+                            market_city="",
+                        )
+                        if imported and imported.get("ok"):
+                            st.success(
+                                f"✅ **{imported.get('organisation', domain_tag)}** imported to Leads Directory!"
                             )
-                            if imported and imported.get("ok"):
-                                st.success(
-                                    f"✅ **{imported.get('organisation', domain_tag)}** imported to Leads Directory!"
-                                )
-                            else:
-                                st.warning(
-                                    f"⚠️ Scraped but limited data found for {domain_tag}. "
-                                    f"Check Leads Directory."
-                                )
-                        except Exception as _exc:
-                            st.error(f"Import failed: {_exc}")
+                        else:
+                            st.warning(
+                                f"⚠️ Scraped but limited data found for {domain_tag}. "
+                                f"Check Leads Directory."
+                            )
+                    except Exception as _exc:
+                        st.error(f"Import failed: {_exc}")
 
-        elif current_q:
-            st.markdown("""
-            <div style='text-align:center;padding:40px 20px;color:#334155'>
-                <div style='font-size:3rem'>🔍</div>
-                <div style='color:#64748b;margin-top:12px'>No results returned. Try a different query.</div>
+    elif current_q and not fc_err:
+        st.markdown("""
+        <div style='text-align:center;padding:40px 20px;color:#334155'>
+            <div style='font-size:3rem'>🔍</div>
+            <div style='color:#64748b;margin-top:12px'>No results returned. Try broader search terms.</div>
+        </div>
+        """, unsafe_allow_html=True)
+    elif not current_q and not fc_err:
+        st.markdown("""
+        <div style='text-align:center;padding:50px 20px;color:#334155'>
+            <div style='font-size:3.5rem'>🔥</div>
+            <div style='font-family:Space Grotesk,sans-serif;font-size:1.2rem;font-weight:600;
+                        color:#94a3b8;margin-top:12px'>
+                Search the live web for architecture firms
             </div>
-            """, unsafe_allow_html=True)
-        else:
-            st.markdown("""
-            <div style='text-align:center;padding:50px 20px;color:#334155'>
-                <div style='font-size:3.5rem'>🔥</div>
-                <div style='font-family:Space Grotesk,sans-serif;font-size:1.2rem;font-weight:600;
-                            color:#94a3b8;margin-top:12px'>
-                    Search the live web for architecture firms
-                </div>
-                <div style='font-size:0.88rem;color:#475569;margin-top:8px;max-width:480px;
-                            margin-left:auto;margin-right:auto'>
-                    Enter a query like <em>"top architecture firms in Pune India"</em> and Firecrawl
-                    will search the web, scrape results, and let you import them directly.
-                </div>
+            <div style='font-size:0.88rem;color:#475569;margin-top:8px;max-width:480px;
+                        margin-left:auto;margin-right:auto'>
+                Enter a query like <em>"top architecture firms in Delhi 2026"</em> to search the live web
+                with Firecrawl, or switch to the Curated Directory to discover verified Indian studios.
             </div>
-            """, unsafe_allow_html=True)
+        """, unsafe_allow_html=True)
