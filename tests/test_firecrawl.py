@@ -6,13 +6,13 @@ from scraper.firecrawl_client import (
     SearchHit,
     is_available,
     search_local_directory,
-    test_firecrawl_connection,
+    test_firecrawl_connection as check_firecrawl_conn,
 )
 
 
-def test_test_firecrawl_connection_with_dummy_key():
+def test_invalid_key_connection():
     """Testing an invalid key should return (False, description)."""
-    ok, msg = test_firecrawl_connection("invalid_test_key_xyz")
+    ok, msg = check_firecrawl_conn("invalid_test_key_xyz")
     assert ok is False
     assert "Invalid API key" in msg or "HTTP 401" in msg
 
