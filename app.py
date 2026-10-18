@@ -1884,7 +1884,151 @@ elif nav == "🔍 Saved Companies":
                                    file_name="archscale_saved.csv", mime="text/csv")
 
 
-# ════════════════════════════════════════════════════════════════elif nav == "🔥 AI Search (Firecrawl)":
+# ═══════════════════════════════════════════════════════════════════════════════
+# PAGE: Evidence Inspector
+# ═══════════════════════════════════════════════════════════════════════════════
+elif nav == "🔬 Evidence":
+    st.markdown("#### Field-Level Evidence Inspector")
+    st.caption("Every value has a traceable source URL and extraction timestamp.")
+
+    try:
+        with db.get_connection(DB_PATH) as conn:
+            companies = db.list_companies(conn)
+    except Exception:
+        companies = []
+
+    if not companies:
+        st.info("No companies saved. Run the Competitor Analyser and save results first.")
+    else:
+        options = [f"{c['org_name'] or c['domain_key']} ({c['domain_key']})" for c in companies]
+        cmap = {f"{c['org_name'] or c['domain_key']} ({c['domain_key']})": c for c in companies}
+        sel = st.selectbox("Company", ["— select —"] + options)
+
+        if sel and sel != "— select —":
+            comp = cmap[sel]
+            try:
+                with db.get_connection(DB_PATH) as conn:
+                    evidence = db.get_evidence_for_company(conn, comp["id"])
+            except Exception as exc:
+                st.error(str(exc))
+                evidence = []
+
+            fields: dict[str, list] = {}
+            for ev in evidence:
+                fields.setdefault(ev["field_name"], []).append(ev)
+
+            for field_name, rows in fields.items():
+                with st.expander(f"**{field_name}** ({len(rows)} candidate(s))"):
+                    for ev in rows:
+                        status = ev["verification_status"]
+                        val    = ev["extracted_value"] or "*Not found*"
+                        src    = ev["source_url"]
+                        ts     = (ev["extracted_at"] or "")[:19].replace("T", " ")
+                        st.markdown(
+                            f"**Value:** `{val}`  \n"
+                            f"**Source:** [{src[:70]}]({src})  \n"
+                            f"**Method:** {ev['extraction_method'] or '—'}  \n"
+                            f"**Status:** `{status}`  \n"
+                            f"**Extracted:** {ts}",
+                        )
+                        if ev["supporting_text"]:
+                            with st.expander("Supporting text"):
+                                st.code(ev["supporting_text"][:800])
+
+                        new_status = st.selectbox(
+                            "Update status",
+                            ["Extracted","Source checked","Cross-verified","Not found","Needs review"],
+                            index=["Extracted","Source checked","Cross-verified","Not found","Needs review"].index(status)
+                            if status in ["Extracted","Source checked","Cross-verified","Not found","Needs review"] else 0,
+                            key=f"ev_status_{ev['id']}",
+                        )
+                        note = st.text_input("Note", key=f"ev_note_{ev['id']}")
+                        if st.button("Save", key=f"ev_save_{ev['id']}"):
+                            try:
+                                with db.get_connection(DB_PATH) as conn:
+                                    db.update_evidence_status(conn, ev["id"], new_status, note or None, _now())
+                                st.success("Saved")
+                                st.rerun()
+                            except Exception as exc:
+                                st.error(str(exc))
+                        st.markdown("---")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PAGE: Bulk Scrape (seed CSV based)
+# ═══════════════════════════════════════════════════════════════════════════════
+elif nav == "⚙️ Bulk Scrape":
+    st.markdown("#### Bulk Scrape from Approved URL List")
+    st.caption("Scrape multiple companies from `data/seed_urls.csv` and save all results to the database.")
+
+    col_s, col_i = st.columns([2, 1])
+    with col_s:
+        st.markdown("**Current Seed List** (`data/seed_urls.csv`)")
+        if SEED_CSV.exists():
+            try:
+                df_seed = pd.read_csv(SEED_CSV)
+                st.dataframe(df_seed, use_container_width=True, height=250)
+                st.caption(f"{len(df_seed)} URL(s)")
+            except Exception as exc:
+                st.error(str(exc))
+        else:
+            st.warning("seed_urls.csv not found.")
+
+    with col_i:
+        st.markdown("**Upload additional URLs**")
+        upl = st.file_uploader("CSV (url, category, notes)", type=["csv"])
+        if upl:
+            try:
+                new_df = pd.read_csv(upl)
+                if "url" not in new_df.columns:
+                    st.error("CSV must have a 'url' column.")
+                else:
+                    existing = pd.read_csv(SEED_CSV) if SEED_CSV.exists() else pd.DataFrame(columns=["url","category","notes"])
+                    merged = pd.concat([existing, new_df]).drop_duplicates(subset=["url"])
+                    merged.to_csv(SEED_CSV, index=False)
+                    st.success(f"Merged. {len(merged)} total URL(s).")
+                    st.rerun()
+            except Exception as exc:
+                st.error(str(exc))
+
+    st.markdown("---")
+    if st.button("🚀 Start Bulk Scrape", type="primary"):
+        log_box = st.empty()
+        log_lines: list[str] = []
+
+        def log(msg):
+            log_lines.append(msg)
+            log_box.text_area("Log", value="\n".join(log_lines[-25:]), height=260, disabled=True, key="bulk_log")
+
+        try:
+            result = run_scrape(seed_csv_path=SEED_CSV, db_path=DB_PATH, progress_callback=log)
+            st.success(f"✅ Run #{result['run_id']}: {result['urls_succeeded']}/{result['urls_attempted']} succeeded.")
+            if result["errors"]:
+                with st.expander(f"⚠️ {len(result['errors'])} error(s)"):
+                    for e in result["errors"]:
+                        st.markdown(f"- `{e['url']}` — {e['error']}: {e.get('detail','')}")
+        except Exception as exc:
+            st.error(f"Scrape failed: {exc}")
+            logger.exception("Bulk scrape failed")
+
+    st.markdown("---")
+    st.markdown("#### Run History")
+    try:
+        with db.get_connection(DB_PATH) as conn:
+            runs = conn.execute("SELECT * FROM scrape_runs ORDER BY id DESC LIMIT 10").fetchall()
+        if runs:
+            st.dataframe(pd.DataFrame([dict(r) for r in runs]), use_container_width=True)
+        else:
+            st.info("No runs yet.")
+    except Exception as exc:
+        st.error(str(exc))
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PAGE: 🔥 AI Search (Firecrawl)
+# ═══════════════════════════════════════════════════════════════════════════════
+elif nav == "🔥 AI Search (Firecrawl)":
+
     from scraper.firecrawl_client import (
         is_available as fc_available,
         firecrawl_search,
