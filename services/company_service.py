@@ -581,6 +581,93 @@ def find_and_extract_company_lead(
     return lead_dict
 
 
+def save_structured_lead_to_db(
+    lead_data: dict,
+    db_path: pathlib.Path | None = None,
+    category: str = "architecture",
+) -> dict:
+    """
+    Persist an extracted/structured Firecrawl lead directly into SQLite with
+    company and evidence records.
+    """
+    url = (lead_data.get("url") or "").strip()
+    if not url:
+        return {"ok": False, "error": "Missing URL"}
+
+    domain = lead_data.get("domain") or normalise_domain(url)
+    org_name = lead_data.get("organisation") or lead_data.get("title") or domain
+    owner_name = lead_data.get("owner_name")
+    if owner_name == "Not found":
+        owner_name = None
+    designation = lead_data.get("designation")
+    if designation == "Not found":
+        designation = None
+    city = lead_data.get("city")
+    if city in ("Not stated", "Not found"):
+        city = None
+    org_size = lead_data.get("org_size")
+    if org_size in ("Not stated", "Not found"):
+        org_size = None
+
+    now = _now_iso()
+    db.init_db(db_path)
+    with db.get_connection(db_path) as conn:
+        run_id = db.start_scrape_run(conn, now)
+        company_id = db.upsert_company(conn, domain, url, category, now, run_id)
+
+        conn.execute(
+            """
+            UPDATE companies
+            SET owner_name = ?, designation = ?, org_size = ?, city = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (owner_name, designation, org_size, city, now, company_id),
+        )
+
+        def add_ev(field_name: str, value: str | None, status: str = "Extracted"):
+            if value:
+                try:
+                    db.upsert_evidence(
+                        conn,
+                        company_id=company_id,
+                        field_name=field_name,
+                        extracted_value=value,
+                        source_url=url,
+                        supporting_text=lead_data.get("clean_summary") or f"Extracted from {url}",
+                        extraction_method="firecrawl_structured",
+                        extracted_at=now,
+                        verification_status=status,
+                    )
+                except Exception as exc:
+                    logger.debug("Evidence insert failed: %s", exc)
+
+        add_ev("org_name", org_name, "Verified")
+        if owner_name:
+            add_ev("owner_name", owner_name, "Needs review")
+        if designation:
+            add_ev("designation", designation, "Needs review")
+        if city:
+            add_ev("city", city, "Extracted")
+        add_ev("website", url, "Verified")
+
+        for em in lead_data.get("emails", []):
+            add_ev("email", em, "Extracted")
+
+        for ph in lead_data.get("phones", []):
+            add_ev("phone", ph, "Extracted")
+
+        for soc_name, soc_url in lead_data.get("socials", {}).items():
+            add_ev(soc_name, soc_url, "Extracted")
+
+        for srv in lead_data.get("services", []):
+            add_ev("service", srv, "Extracted")
+
+        db.finish_scrape_run(conn, run_id, now, 1, 1, 0, "done")
+        conn.commit()
+
+    return {"ok": True, "company_id": company_id, "organisation": org_name}
+
+
 def find_and_extract_city_leads(
     city: str,
     limit: int = 50,

@@ -21,7 +21,7 @@ sys.path.insert(0, str(ROOT))
 from database import db
 from services.company_service import (
     run_scrape, export_csv, get_leads, export_leads_csv, export_leads_excel,
-    find_and_extract_company_lead, find_and_extract_city_leads
+    find_and_extract_company_lead, find_and_extract_city_leads, save_structured_lead_to_db
 )
 from scraper.validator import URLValidationError, validate_url, normalise_domain
 from scraper.fetcher import fetch, discover_internal_pages, get_session
@@ -858,91 +858,278 @@ if nav == "🔥 AI Search & Lead Discovery":
     current_q = st.session_state.get("fc_search_query", "")
 
     if hits:
-        st.markdown(
-            f"<div style='font-size:0.85rem;color:#64748b;margin-bottom:16px'>"
-            f"Found <strong style='color:#fb923c'>{len(hits)}</strong> results for "
-            f"<em>\"{current_q}\"</em></div>",
-            unsafe_allow_html=True,
-        )
-
-        for idx, hit in enumerate(hits):
-            domain_tag = hit.url.split("/")[2] if hit.url.startswith("http") else hit.url
-
-            snippet = ""
-            if hit.markdown:
-                lines = [l.strip() for l in hit.markdown.splitlines() if l.strip() and not l.startswith("#")]
-                snippet = " ".join(lines[:6])[:360]
-
-            is_local = getattr(hit, "source", "") == "local_directory"
-            source_badge = (
-                '<span style="font-size:0.75rem;color:#38bdf8;background:rgba(56,189,248,0.1);'
-                'padding:2px 8px;border-radius:999px;border:1px solid rgba(56,189,248,0.25)">📚 Curated Directory</span>'
-                if is_local else
-                '<span style="font-size:0.75rem;color:#fb923c;background:rgba(251,63,0,0.1);'
-                'padding:2px 8px;border-radius:999px;border:1px solid rgba(251,63,0,0.25)">🔥 Firecrawl Web</span>'
+        # Top Header Bar & View Modes
+        bar_col1, bar_col2, bar_col3 = st.columns([3, 1.8, 1.4])
+        with bar_col1:
+            st.markdown(
+                f"<div style='font-size:0.95rem;color:#cbd5e1;padding-top:6px'>"
+                f"🏛️ Found <strong style='color:#fb923c;font-size:1.1rem'>{len(hits)}</strong> qualified leads for "
+                f"<em>\"{current_q}\"</em></div>",
+                unsafe_allow_html=True,
+            )
+        with bar_col2:
+            view_mode = st.radio(
+                "Display Mode",
+                ["🗂️ Executive Cards", "📊 Structured Table"],
+                horizontal=True,
+                key="fc_results_view_mode",
+                label_visibility="collapsed",
+            )
+        with bar_col3:
+            # 1-Click Export CSV of scraped leads
+            leads_records = [h.to_dict() for h in hits]
+            df_export = pd.DataFrame(leads_records)[[
+                "organisation", "owner_name", "designation", "city",
+                "emails", "phones", "socials", "org_size", "services", "url"
+            ]]
+            df_export["emails"] = df_export["emails"].apply(lambda x: ", ".join(x) if isinstance(x, list) else str(x))
+            df_export["phones"] = df_export["phones"].apply(lambda x: ", ".join(x) if isinstance(x, list) else str(x))
+            df_export["services"] = df_export["services"].apply(lambda x: ", ".join(x) if isinstance(x, list) else str(x))
+            df_export["socials"] = df_export["socials"].apply(lambda x: ", ".join(f"{k}: {v}" for k, v in x.items()) if isinstance(x, dict) else str(x))
+            csv_data = df_export.to_csv(index=False)
+            st.download_button(
+                "📥 Export CSV",
+                data=csv_data,
+                file_name=f"archscale_leads_{int(time.time())}.csv",
+                mime="text/csv",
+                use_container_width=True,
+                key="fc_download_csv_top",
             )
 
-            st.markdown(f"""
-            <div style='background:rgba(255,255,255,0.03);border:1px solid rgba(251,63,0,0.18);
-                        border-radius:14px;padding:20px 24px;margin-bottom:14px;
-                        transition:all 0.2s' onmouseover="this.style.borderColor='rgba(251,63,0,0.45)'"
-                        onmouseout="this.style.borderColor='rgba(251,63,0,0.18)'">
-                <div style='display:flex;justify-content:space-between;align-items:flex-start;gap:12px'>
-                    <div style='flex:1'>
-                        <div style='font-family:Space Grotesk,sans-serif;font-size:1.05rem;
-                                    font-weight:600;color:#e2e8f0;margin-bottom:4px'>
-                            {hit.title or domain_tag}
-                        </div>
-                        <div style='display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap'>
-                            <span style='font-size:0.78rem;color:#fb923c;background:rgba(251,63,0,0.1);
-                                         padding:2px 10px;border-radius:999px;border:1px solid rgba(251,63,0,0.2)'>
-                                🌐 {domain_tag}
-                            </span>
-                            {source_badge}
-                            {'<span style="font-size:0.75rem;color:#34d399;background:rgba(16,185,129,0.1);padding:2px 8px;border-radius:999px;border:1px solid rgba(16,185,129,0.2)">✓ Content Scraped</span>' if hit.markdown else ''}
-                        </div>
-                        <div style='font-size:0.84rem;color:#94a3b8;line-height:1.55'>
-                            {hit.description or snippet[:200] or "<em style='color:#475569'>No description available.</em>"}
-                        </div>
-                        {f'<div style="margin-top:8px;background:rgba(0,0,0,0.2);border-left:3px solid rgba(251,63,0,0.4);border-radius:4px;padding:6px 10px;font-size:0.78rem;color:#94a3b8;font-family:monospace;word-break:break-word">{snippet[:280]}…</div>' if snippet and not hit.description else ''}
-                    </div>
-                    <a href='{hit.url}' target='_blank'
-                       style='background:rgba(251,63,0,0.15);border:1px solid rgba(251,63,0,0.35);
-                              color:#fb923c;padding:8px 14px;border-radius:8px;text-decoration:none;
-                              font-size:0.8rem;font-weight:600;white-space:nowrap;
-                              display:inline-flex;align-items:center;gap:4px'>
-                        Visit ↗
-                    </a>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+        st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
 
-            # ── Scrape & Import button ─────────────────────────────────────────
-            btn_key = f"fc_import_{idx}_{domain_tag}"
-            if st.button(
-                f"⚡ Scrape & Import to Leads — {domain_tag}",
-                key=btn_key,
-                help="Run extraction on this firm's website and store full leadership and contact intelligence.",
-            ):
-                with st.spinner(f"Scraping {hit.url} and extracting leads…"):
-                    try:
-                        imported = find_and_extract_company_lead(
-                            target_input=hit.url,
-                            db_path=DB_PATH,
-                            category="architecture",
-                            market_city="",
+        if view_mode == "📊 Structured Table":
+            # Display Structured Table
+            st.dataframe(
+                df_export.rename(columns={
+                    "organisation": "Organisation",
+                    "owner_name": "Owner / Founder",
+                    "designation": "Designation",
+                    "city": "Location / City",
+                    "emails": "Email(s)",
+                    "phones": "Phone(s)",
+                    "socials": "Social Profiles",
+                    "org_size": "Team Size",
+                    "services": "Services",
+                    "url": "Website",
+                }),
+                use_container_width=True,
+                hide_index=True,
+            )
+        else:
+            # Display Executive Cards
+            for idx, hit in enumerate(hits):
+                domain_tag = hit.url.split("/")[2] if hit.url.startswith("http") else hit.url
+                org_name = hit.organisation or hit.title or domain_tag
+                owner = hit.owner_name if hit.owner_name and hit.owner_name != "Not found" else None
+                desig = hit.designation if hit.designation and hit.designation != "Not found" else None
+                city = hit.city if hit.city and hit.city not in ("Not stated", "Not found") else "India"
+                is_local = getattr(hit, "source", "") == "local_directory"
+
+                # Badges
+                source_badge = (
+                    '<span style="font-size:0.75rem;color:#38bdf8;background:rgba(56,189,248,0.12);'
+                    'padding:3px 10px;border-radius:999px;border:1px solid rgba(56,189,248,0.3);font-weight:600">'
+                    '📚 Curated Directory</span>'
+                    if is_local else
+                    '<span style="font-size:0.75rem;color:#fb923c;background:rgba(251,63,0,0.12);'
+                    'padding:3px 10px;border-radius:999px;border:1px solid rgba(251,63,0,0.3);font-weight:600">'
+                    '🔥 Firecrawl Live Web</span>'
+                )
+
+                status_badge = (
+                    '<span style="font-size:0.75rem;color:#34d399;background:rgba(16,185,129,0.12);'
+                    'padding:3px 10px;border-radius:999px;border:1px solid rgba(16,185,129,0.3);font-weight:600">'
+                    '✓ Verified Lead</span>'
+                    if owner else
+                    '<span style="font-size:0.75rem;color:#fbbf24;background:rgba(245,158,11,0.12);'
+                    'padding:3px 10px;border-radius:999px;border:1px solid rgba(245,158,11,0.3)">'
+                    'Needs Review</span>'
+                )
+
+                # Contacts pills
+                emails_html = ""
+                if hit.emails:
+                    emails_html = " ".join([
+                        f'<a href="mailto:{em}" style="display:inline-flex;align-items:center;gap:4px;'
+                        f'font-size:0.78rem;color:#38bdf8;background:rgba(56,189,248,0.08);'
+                        f'padding:3px 9px;border-radius:6px;border:1px solid rgba(56,189,248,0.25);text-decoration:none">'
+                        f'✉️ {em}</a>'
+                        for em in hit.emails[:2]
+                    ])
+
+                phones_html = ""
+                if hit.phones:
+                    phones_html = " ".join([
+                        f'<a href="tel:{ph}" style="display:inline-flex;align-items:center;gap:4px;'
+                        f'font-size:0.78rem;color:#a7f3d0;background:rgba(16,185,129,0.08);'
+                        f'padding:3px 9px;border-radius:6px;border:1px solid rgba(16,185,129,0.25);text-decoration:none">'
+                        f'📞 {ph}</a>'
+                        for ph in hit.phones[:2]
+                    ])
+
+                socials_html = ""
+                if hit.socials:
+                    for platform, s_url in hit.socials.items():
+                        icon = "💼" if platform == "linkedin" else "📷" if platform == "instagram" else "🌐"
+                        socials_html += (
+                            f'<a href="{s_url}" target="_blank" style="display:inline-flex;align-items:center;gap:4px;'
+                            f'font-size:0.76rem;color:#e2e8f0;background:rgba(255,255,255,0.06);'
+                            f'padding:3px 8px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);text-decoration:none">'
+                            f'{icon} {platform.title()} ↗</a> '
                         )
-                        if imported and imported.get("ok"):
-                            st.success(
-                                f"✅ **{imported.get('organisation', domain_tag)}** imported to Leads Directory!"
-                            )
+
+                services_chips = ""
+                if hit.services:
+                    services_chips = " ".join([
+                        f'<span style="font-size:0.72rem;color:#cbd5e1;background:rgba(255,255,255,0.04);'
+                        f'padding:2px 8px;border-radius:999px;border:1px solid rgba(255,255,255,0.1)">'
+                        f'{srv}</span>'
+                        for srv in hit.services[:4]
+                    ])
+
+                owner_display = (
+                    f'<span style="color:#34d399;font-weight:700">{owner}</span>'
+                    if owner else
+                    '<span style="color:#94a3b8;font-style:italic">Needs Review / Not found</span>'
+                )
+                desig_display = (
+                    f'<span style="color:#38bdf8;font-weight:600">{desig}</span>'
+                    if desig else
+                    '<span style="color:#64748b">Not specified</span>'
+                )
+
+                st.markdown(f"""
+                <div style='background:rgba(255,255,255,0.025);border:1px solid rgba(251,63,0,0.22);
+                            border-radius:16px;padding:22px 26px;margin-bottom:18px;
+                            box-shadow:0 4px 20px rgba(0,0,0,0.2)'>
+                    <div style='display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap'>
+                        <div style='flex:1;min-width:300px'>
+                            <div style='display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px'>
+                                <span style='font-family:Space Grotesk,sans-serif;font-size:1.25rem;
+                                             font-weight:700;color:#f8fafc'>
+                                    🏛️ {org_name}
+                                </span>
+                                <span style='font-size:0.75rem;color:#cbd5e1;background:rgba(255,255,255,0.06);
+                                             padding:2px 8px;border-radius:999px;border:1px solid rgba(255,255,255,0.15)'>
+                                    📍 {city}
+                                </span>
+                                {status_badge}
+                                {source_badge}
+                            </div>
+                            <div style='display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:0.8rem;color:#94a3b8'>
+                                <span>🌐 <code>{domain_tag}</code></span>
+                                <span>•</span>
+                                <span>👥 {hit.org_size}</span>
+                            </div>
+                        </div>
+                        <div>
+                            <a href='{hit.url}' target='_blank'
+                               style='background:rgba(251,63,0,0.15);border:1px solid rgba(251,63,0,0.35);
+                                      color:#fb923c;padding:7px 14px;border-radius:8px;text-decoration:none;
+                                      font-size:0.8rem;font-weight:600;display:inline-flex;align-items:center;gap:4px'>
+                                Visit Official Site ↗
+                            </a>
+                        </div>
+                    </div>
+
+                    <!-- Structured Executive Leadership Row -->
+                    <div style='display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:12px;
+                                background:rgba(0,0,0,0.25);border:1px solid rgba(255,255,255,0.06);
+                                border-radius:10px;padding:12px 16px;margin-bottom:14px'>
+                        <div>
+                            <div style='font-size:0.72rem;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:2px'>
+                                👤 Executive Leader / Owner
+                            </div>
+                            <div style='font-size:0.92rem'>{owner_display}</div>
+                        </div>
+                        <div>
+                            <div style='font-size:0.72rem;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:2px'>
+                                💼 Executive Designation
+                            </div>
+                            <div style='font-size:0.92rem'>{desig_display}</div>
+                        </div>
+                        <div>
+                            <div style='font-size:0.72rem;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:2px'>
+                                📍 Market Headquarters
+                            </div>
+                            <div style='font-size:0.92rem;color:#e2e8f0;font-weight:500'>{city}</div>
+                        </div>
+                        <div>
+                            <div style='font-size:0.72rem;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:2px'>
+                                👥 Firm Headcount
+                            </div>
+                            <div style='font-size:0.92rem;color:#e2e8f0;font-weight:500'>{hit.org_size}</div>
+                        </div>
+                    </div>
+
+                    <!-- Contacts & Social Links -->
+                    <div style='display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px'>
+                        {emails_html if emails_html else "<span style='font-size:0.78rem;color:#64748b'>✉️ No public email detected</span>"}
+                        {phones_html}
+                        {socials_html}
+                    </div>
+
+                    <!-- Services -->
+                    {f"<div style='display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:12px'><span style='font-size:0.72rem;color:#94a3b8;font-weight:600'>SPECIALTIES:</span> {services_chips}</div>" if services_chips else ""}
+
+                    <!-- Clean Executive Summary -->
+                    <div style='font-size:0.86rem;color:#cbd5e1;line-height:1.55;background:rgba(255,255,255,0.015);
+                                border-left:3px solid #fb923c;padding:8px 12px;border-radius:4px'>
+                        {hit.clean_summary or hit.description or "Verified architecture and design studio lead."}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                # Card Actions
+                btn_c1, btn_c2, btn_c3 = st.columns([2.5, 2.5, 2])
+                with btn_c1:
+                    save_btn_key = f"fc_save_lead_{idx}_{domain_tag}"
+                    if st.button(
+                        f"⚡ 1-Click Save Lead — {org_name[:20]}",
+                        key=save_btn_key,
+                        type="primary",
+                        use_container_width=True,
+                        help="Persist this structured organisation, owner, designation, and contact details directly to SQLite.",
+                    ):
+                        save_res = save_structured_lead_to_db(hit.to_dict(), db_path=DB_PATH)
+                        if save_res.get("ok"):
+                            st.success(f"✅ **{org_name}** saved to Executive Leads Directory!")
                         else:
-                            st.warning(
-                                f"⚠️ Scraped but limited data found for {domain_tag}. "
-                                f"Check Leads Directory."
+                            st.error(f"Save failed: {save_res.get('error')}")
+
+                with btn_c2:
+                    crawl_btn_key = f"fc_deep_crawl_{idx}_{domain_tag}"
+                    if st.button(
+                        f"🔬 Full Deep Crawl & Evidence",
+                        key=crawl_btn_key,
+                        use_container_width=True,
+                        help="Run full multi-page crawl (About, Team, Portfolio) and source tracing.",
+                    ):
+                        with st.spinner(f"Crawling {hit.url} and verifying evidence..."):
+                            lead_res = find_and_extract_company_lead(
+                                target_input=hit.url,
+                                db_path=DB_PATH,
+                                category="architecture",
+                                market_city=hit.city if hit.city != "Not stated" else "",
                             )
-                    except Exception as _exc:
-                        st.error(f"Import failed: {_exc}")
+                            if lead_res.get("ok"):
+                                st.session_state["current_lead"] = lead_res
+                                st.success(f"✅ Deep analysis complete for {org_name}! View in Target Firm Lead Analyzer.")
+                            else:
+                                st.error(f"Crawl failed: {lead_res.get('error')}")
+
+                with btn_c3:
+                    with st.expander("🔎 Audit Evidence", expanded=False):
+                        st.markdown(f"**URL:** [{hit.url}]({hit.url})")
+                        st.markdown(f"**Source:** `{hit.source}`")
+                        st.markdown(f"**Title:** {hit.title}")
+                        if hit.description:
+                            st.markdown(f"**Description:** {hit.description}")
+                        if hit.markdown:
+                            st.text_area("Scraped Markdown", value=hit.markdown[:600], height=100, disabled=True, key=f"md_aud_{idx}")
+
+                st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 
     elif current_q and not fc_err:
         st.markdown("""
