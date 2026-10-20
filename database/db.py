@@ -473,11 +473,13 @@ def get_leads_data(
                 org_name = val
             elif fn == "owner_name":
                 if stat == "Rejected":
-                    if not owner_name:
+                    if not owner_name or owner_name == val:
                         owner_status = "Rejected"
                 elif val and val != "Not found" and val != "Role unverified":
                     if not owner_name or owner_name == "Not found":
                         owner_name = val
+                        owner_status = stat
+                    elif owner_name == val and owner_status in ("Not found", "Extracted"):
                         owner_status = stat
             elif fn == "designation":
                 if stat != "Rejected" and val and val != "Not found" and val != "Role unverified":
@@ -493,8 +495,11 @@ def get_leads_data(
                         c_city = "Not verified"
                         city_status = "Needs review" if stat == "Rejected" else stat
                 elif val and val != "Not found":
-                    c_city = val
-                    city_status = stat
+                    if not c_city or c_city in ("Not found", "Not verified"):
+                        c_city = val
+                        city_status = stat
+                    elif c_city == val and city_status in ("Not found", "Extracted"):
+                        city_status = stat
             elif fn in ("phone", "mobile") and val:
                 if val not in phones:
                     phones.append(val)
