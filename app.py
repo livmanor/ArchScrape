@@ -215,11 +215,35 @@ hr { border-color: rgba(255,255,255,0.06) !important; }
 .stAlert { border-radius: 12px !important; }
 .stDataFrame { border-radius: 12px; overflow: hidden; }
 
-/* ── Lead Badges & Cards ── */
-.badge-extracted {
+/* ── Lead Badges & Cards (5 Verification Tiers) ── */
+.badge-source-supported {
     background: rgba(16, 185, 129, 0.15);
     color: #34d399;
     border: 1px solid rgba(16, 185, 129, 0.35);
+    border-radius: 6px;
+    padding: 2px 7px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+.badge-independent {
+    background: rgba(168, 85, 247, 0.15);
+    color: #c084fc;
+    border: 1px solid rgba(168, 85, 247, 0.35);
+    border-radius: 6px;
+    padding: 2px 7px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+.badge-extracted {
+    background: rgba(56, 189, 248, 0.15);
+    color: #38bdf8;
+    border: 1px solid rgba(56, 189, 248, 0.35);
     border-radius: 6px;
     padding: 2px 7px;
     font-size: 0.72rem;
@@ -232,6 +256,18 @@ hr { border-color: rgba(255,255,255,0.06) !important; }
     background: rgba(245, 158, 11, 0.15);
     color: #fbbf24;
     border: 1px solid rgba(245, 158, 11, 0.35);
+    border-radius: 6px;
+    padding: 2px 7px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+.badge-rejected {
+    background: rgba(244, 63, 94, 0.15);
+    color: #f43f5e;
+    border: 1px solid rgba(244, 63, 94, 0.35);
     border-radius: 6px;
     padding: 2px 7px;
     font-size: 0.72rem;
@@ -1164,7 +1200,7 @@ elif nav == "🎯 Target Firm Lead Analyzer":
         "<div style='font-size:0.88rem;color:#94a3b8;margin-bottom:14px'>"
         "Discover qualified executive leads for Indian architecture & interior design firms in real-time. "
         "The engine crawls verified public web pages, extracts executive leads, and shows the <strong>exact sources it retrieved each data point from</strong>. "
-        "<strong>Zero mockups. 100% verified live data.</strong>"
+        "<strong>Evidence-based intelligence with multi-tier source verification.</strong>"
         "</div>",
         unsafe_allow_html=True,
     )
@@ -1399,7 +1435,7 @@ elif nav == "🎯 Target Firm Lead Analyzer":
                     <div style="font-size:0.72rem;color:#64748b;text-transform:uppercase;font-weight:700">👤 Owner / Founder</div>
                     <div style="font-size:1.1rem;font-weight:700;color:#f8fafc;margin:4px 0">
                         {owner}
-                        <span class="badge-{'review' if owner_status == 'Needs review' else ('extracted' if owner != 'Not found' else 'notfound')}">
+                        <span class="badge-{'source-supported' if owner_status == 'Source-supported' else ('independent' if owner_status == 'Independently verified' else ('review' if owner_status == 'Needs review' else ('rejected' if owner_status == 'Rejected' else ('extracted' if owner != 'Not found' else 'notfound'))))}">
                             {owner_status}
                         </span>
                     </div>
@@ -1543,7 +1579,7 @@ elif nav == "🎯 Target Firm Lead Analyzer":
                             <span style="font-size:0.9rem;font-weight:600;color:#a5b4fc;margin-left:6px">{primary_c.get('value')}</span>
                         </div>
                         <div>
-                            <span class="badge-{'review' if status == 'Needs review' else ('extracted' if status == 'Extracted' else 'notfound')}">
+                            <span class="badge-{'source-supported' if status == 'Source-supported' else ('independent' if status == 'Independently verified' else ('review' if status == 'Needs review' else ('rejected' if status == 'Rejected' else ('extracted' if status == 'Extracted' else 'notfound'))))}">
                                 {status}
                             </span>
                             <span style="font-size:0.72rem;background:rgba(255,255,255,0.06);color:#94a3b8;padding:2px 7px;border-radius:4px;margin-left:4px">
@@ -1560,6 +1596,7 @@ elif nav == "🎯 Target Firm Lead Analyzer":
                     <div class="quote-snippet">
                         "{snippet}"
                     </div>
+                    {f'<div style="color:#f43f5e;font-size:0.76rem;margin-top:6px;font-weight:600">⚠️ Rejection Reason: {primary_c.get("rejection_reason")}</div>' if primary_c.get("rejection_reason") else ''}
                 </div>
                 """, unsafe_allow_html=True)
 
@@ -1665,7 +1702,7 @@ elif nav == "🎯 Target Firm Lead Analyzer":
                 <div style='font-family:Space Grotesk,sans-serif;font-size:1.25rem;color:#94a3b8;margin-top:12px;font-weight:600'>
                 Ready to extract the top architecture companies in {sel_market_city}</div>
                 <div style='font-size:0.88rem;color:#64748b;margin-top:8px;max-width:550px;margin-left:auto;margin-right:auto'>
-                Click the button above to crawl all verified firms in {sel_market_city}, extract executive leads (owners, emails, phones, sizes), and audit exact sources. Zero mockups.
+                Click the button above to crawl firms in {sel_market_city}, extract executive leads (owners, emails, phones, sizes), and audit exact sources with multi-tier verification.
                 </div>
             </div>
             """, unsafe_allow_html=True)
@@ -1897,8 +1934,17 @@ elif nav == "💼 Executive Leads Directory":
             socials     = l.get("social_links", {})
 
             # Owner badge & formatting
+            owner_stat = l.get("owner_status", "Not found")
             if owner_val != "Not found":
-                owner_html = f"<div style='font-weight:600;color:#f1f5f9;font-size:0.95rem'>{owner_val} <span class='badge-review'>⚠️ needs review</span></div>"
+                if owner_stat == "Source-supported":
+                    badge_span = "<span class='badge-source-supported'>✅ source-supported</span>"
+                elif owner_stat == "Independently verified":
+                    badge_span = "<span class='badge-independent'>🛡️ independently verified</span>"
+                elif owner_stat == "Rejected":
+                    badge_span = "<span class='badge-rejected'>❌ rejected</span>"
+                else:
+                    badge_span = "<span class='badge-review'>⚠️ needs review</span>"
+                owner_html = f"<div style='font-weight:600;color:#f1f5f9;font-size:0.95rem'>{owner_val} {badge_span}</div>"
                 if desig_val != "Not found":
                     owner_html += f"<div style='font-size:0.8rem;color:#94a3b8;margin-top:2px'>💼 {desig_val}</div>"
             else:
@@ -1919,13 +1965,15 @@ elif nav == "💼 Executive Leads Directory":
                 email_html = "<span class='badge-notfound'>Not found</span>"
 
             # City badge & formatting
-            if city_val != "Not found":
-                if city_stat == "Needs review" or "inferred" in city_stat.lower():
-                    city_html = f"📍 {city_val} <span class='badge-review'>⚠️ inferred</span>"
+            if city_val in ("Not verified", "Not found"):
+                city_html = "<span class='badge-notfound'>📍 Not verified</span>"
+            else:
+                if city_stat == "Source-supported":
+                    city_html = f"📍 {city_val} <span class='badge-source-supported'>✅ source-supported</span>"
+                elif city_stat == "Needs review" or "inferred" in city_stat.lower():
+                    city_html = f"📍 {city_val} <span class='badge-review'>⚠️ needs review</span>"
                 else:
                     city_html = f"📍 {city_val} <span class='badge-extracted'>✅ extracted</span>"
-            else:
-                city_html = "<span class='badge-notfound'>Not found</span>"
 
             # Org size
             if size_val != "Not found":

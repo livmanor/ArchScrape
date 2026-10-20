@@ -375,20 +375,32 @@ _INVALID_NAME_WORDS = {
 } | _NON_PERSON_WORDS
 
 _IGNORE_SECTION_KW = re.compile(
-    r"\b(credits?|collaborators?|vendors?|suppliers?|materials?|partner\s*brands?|clients?|sponsors?|contractors?|consultants?|brands?)\b",
+    r"\b(credits?|collaborators?|vendors?|suppliers?|materials?|partner\s*brands?|"
+    r"clients?|sponsors?|contractors?|consultants?|brands?|"
+    r"testimonials?|reviews?|client-reviews?|customer-reviews?|customer-stories?|"
+    r"feedback|quotes?|case-studies?|customer-says?|ratings?|sales-blurb)\b",
+    re.I,
+)
+
+_TESTIMONIAL_SALES_RE = re.compile(
+    r"\b(sales\s+team|sales\s+lead|sales\s+contact|customer\s+support|testimonial|"
+    r"client\s+review|customer\s+review|happy\s+with|our\s+experience|homeowner|"
+    r"designer\s+Nikita|project\s+manager|made\s+our\s+home|recommend|great\s+experience)\b",
     re.I,
 )
 
 
 def _is_inside_ignored_section(tag: Tag) -> bool:
-    """Check if tag is nested inside a vendor, credit, client, or supplier section."""
+    """Check if tag is nested inside a vendor, credit, client, testimonial, or review section."""
     curr = tag
-    for _ in range(5):
+    for _ in range(6):
         if not curr or not hasattr(curr, "get"):
             break
         cls_str = " ".join(curr.get("class", [])) if curr.get("class") else ""
         id_str = str(curr.get("id", ""))
-        if _IGNORE_SECTION_KW.search(cls_str) or _IGNORE_SECTION_KW.search(id_str):
+        role_str = str(curr.get("role", ""))
+        combined = f"{cls_str} {id_str} {role_str}"
+        if _IGNORE_SECTION_KW.search(combined):
             return True
         curr = curr.parent
     return False
@@ -473,6 +485,8 @@ def _extract_contact_page(soup: BeautifulSoup, source_url: str) -> list[Candidat
 def _extract_team_members(soup: BeautifulSoup, source_url: str) -> list[tuple[str, str, int, str]]:
     """
     Finds (name, designation, rank, snippet) tuples from cards, headings, and text patterns.
+    Strictly excludes vendor credits, customer testimonials, client reviews, and sales contacts.
+    Never invents titles or assumes unverified roles are founders.
     """
     team_members: list[tuple[str, str, int, str]] = []
     seen_names: set[str] = set()
@@ -480,6 +494,9 @@ def _extract_team_members(soup: BeautifulSoup, source_url: str) -> list[tuple[st
     # 1. Cards with class names like team, member, person, profile, leader
     for card in soup.find_all(["div", "li", "article", "section"], class_=True):
         if _is_inside_ignored_section(card):
+            continue
+        card_text_raw = card.get_text(separator=" ", strip=True)
+        if _TESTIMONIAL_SALES_RE.search(card_text_raw):
             continue
         cls_str = " ".join(card.get("class", [])).lower()
         if any(k in cls_str for k in ("team", "member", "person", "leader", "profile", "bio", "founder", "staff")):
@@ -496,9 +513,16 @@ def _extract_team_members(soup: BeautifulSoup, source_url: str) -> list[tuple[st
                 if name_clean and name_clean.lower() not in seen_names:
                     d_text = desig_tag.get_text(strip=True) if desig_tag else ""
                     match = _DESIGNATION_RE.search(d_text)
-                    desig = match.group(0) if match else (d_text if 3 < len(d_text) < 40 else "Architect")
-                    rank = _designation_rank(desig)
-                    snippet = _snippet(card.get_text(separator=" ", strip=True))
+                    if match:
+                        desig = match.group(0)
+                        rank = _designation_rank(desig)
+                    elif 3 < len(d_text) < 40 and not any(w in d_text.lower() for w in ("sales", "marketing", "client", "customer", "project coordinator")):
+                        desig = d_text.strip()
+                        rank = _designation_rank(desig)
+                    else:
+                        desig = "Role unverified"
+                        rank = 99
+                    snippet = _snippet(card_text_raw)
                     seen_names.add(name_clean.lower())
                     team_members.append((name_clean, desig, rank, snippet))
 
@@ -511,6 +535,8 @@ def _extract_team_members(soup: BeautifulSoup, source_url: str) -> list[tuple[st
             sib = h.find_next_sibling(["p", "span", "div", "h4", "h5", "h6"])
             if sib:
                 sib_text = sib.get_text(strip=True)
+                if _TESTIMONIAL_SALES_RE.search(sib_text):
+                    continue
                 match = _DESIGNATION_RE.search(sib_text)
                 if match:
                     desig = match.group(0)
@@ -525,6 +551,8 @@ def _extract_team_members(soup: BeautifulSoup, source_url: str) -> list[tuple[st
         line_clean = line.strip()
         if not line_clean or len(line_clean) > 120:
             continue
+        if _TESTIMONIAL_SALES_RE.search(line_clean):
+            continue
         m = re.match(r"^([A-Z][A-Za-z. '\-]{2,35})\s*(?:,\s*|\s*[-–—]\s*|\s*\(\s*)([A-Za-z\s/]{3,50})\)?$", line_clean)
         if m:
             cand_name = _clean_name(m.group(1))
@@ -536,38 +564,82 @@ def _extract_team_members(soup: BeautifulSoup, source_url: str) -> list[tuple[st
                 seen_names.add(cand_name.lower())
                 team_members.append((cand_name, desig, rank, line_clean))
 
-    # 4. Narrative founder patterns: "set up by Arpan Shah", "founded by Manit Rastogi", "led by Sanjay Puri"
-    narrative_pat = re.compile(
-        r"\b(?:founded|co-founded|established|set up|started|headed|led)\s+by\s+([A-Z][A-Za-z. '\-]{2,40}(?:\s+and\s+[A-Z][A-Za-z. '\-]{2,40})?)",
+    # 4. Narrative founder patterns:
+    # Requires explicit foundation of the firm/practice/company:
+    # "Morphogenesis was founded in 1996 by Sonali Rastogi and Manit Rastogi"
+    # "practice was founded by Arpan Shah"
+    # Never matches loose "led by" or "headed by" which match sales teams, workshops, or reviews!
+    firm_founder_pat = re.compile(
+        r"(?:(?:the\s+)?(?:practice|studio|firm|company|agency|atelier|architects)\s+(?:was\s+)?(?:founded|co-founded|established|set\s+up)|"
+        r"\b(?:founded|co-founded|established)\s+(?:in\s+\d{4}\s+)?)\s+by\s+"
+        r"([A-Z][A-Za-z. '\-]{2,35}(?:\s+(?:and|&)\s+[A-Z][A-Za-z. '\-]{2,35})?)",
         re.IGNORECASE,
     )
-    for m in narrative_pat.finditer(text):
+    for m in firm_founder_pat.finditer(text):
+        # Reject if preceded by team/sales/session context
+        pre_text = text[max(0, m.start() - 60): m.start()].lower()
+        if any(neg in pre_text for neg in ("sales", "marketing", "workshop", "session", "discussion", "team led by", "customer", "support")):
+            continue
+
         raw_founder = m.group(1).strip()
-        names = [n.strip() for n in re.split(r"\s+and\s+", raw_founder, flags=re.I)]
+        names = [n.strip() for n in re.split(r"\s+(?:and|&)\s+", raw_founder, flags=re.I)]
         for n in names:
-            n_clean = re.split(r"\b(?:in|on|at|during|since|with|along)\b", n, flags=re.I)[0].strip()
+            n_clean = re.split(r"\b(?:in\s+the\s+year|in|on|at|during|since|with|along|who)\b", n, flags=re.I)[0].strip()
             cand_name = _clean_name(n_clean)
             if cand_name and cand_name.lower() not in seen_names:
                 seen_names.add(cand_name.lower())
                 start = max(0, m.start() - 30)
-                end = min(len(text), m.end() + 30)
+                end = min(len(text), m.end() + 60)
                 snippet = _snippet(text[start:end])
-                team_members.append((cand_name, "Founder / Principal Architect", 1, snippet))
+
+                surrounding = text[start:end]
+                match_desig = _DESIGNATION_RE.search(surrounding)
+                if match_desig:
+                    desig = match_desig.group(0)
+                elif "co-founded" in m.group(0).lower():
+                    desig = "Co-Founder"
+                else:
+                    desig = "Founder"
+                rank = _designation_rank(desig)
+                team_members.append((cand_name, desig, rank, snippet))
 
     return team_members
 
 
 def _extract_org_size(soup: BeautifulSoup, source_url: str, team_count: int = 0) -> list[Candidate]:
     """
-    Extract org size bucket + basis:
-    (a) Regex for stated size ("team of 25", "50+ professionals", "over 100 employees")
-    (b) Fallback to count of team members listed (lower bound)
-    (c) Else "Not found"
+    Extract org size:
+    (a) Explicit specialist designer/architect count statement: "400+ designers" -> "400+ designers (company-stated)"
+        Preserves distinction between specialist counts and total employee counts.
+    (b) Stated firm/practice team size: "team of 25", "firm of over 100 professionals"
+    (c) Fallback to count of team members listed (lower bound)
+    (d) Else "Not found"
     """
     text = soup.get_text(separator=" ", strip=True)
     candidates: list[Candidate] = []
 
-    # 1. Stated size regex
+    # 1. Specialist designer count statement (e.g. DesignCafe: "team of 400+ designers to advise customers")
+    # Must preserve source qualification and NOT convert to general employee count
+    designer_pat = re.compile(
+        r"\b(?:team\s+of\s+)?(?:about|around|over|more than|approx(?:imately)?\s+)?(\d+\+?)\s+(?:interior\s+)?designers?\b",
+        re.I,
+    )
+    m_des = designer_pat.search(text)
+    if m_des:
+        count_str = m_des.group(1)
+        start = max(0, m_des.start() - 40)
+        end = min(len(text), m_des.end() + 40)
+        snippet = _snippet(text[start:end])
+        statement = f"{count_str} designers (company-stated)"
+        candidates.append(Candidate(
+            "org_size", statement, source_url, snippet, "html_content", "Source-supported"
+        ))
+        candidates.append(Candidate(
+            "org_size_basis", "stated_designer_count", source_url, snippet, "html_content", "Source-supported"
+        ))
+        return candidates
+
+    # 2. Stated firm/practice size regex
     for pat in _STATED_SIZE_RES:
         m = pat.search(text)
         if m:
@@ -600,7 +672,7 @@ def _extract_org_size(soup: BeautifulSoup, source_url: str, team_count: int = 0)
             ))
             return candidates
 
-    # 2. Fallback to count of team members listed (lower bound)
+    # 3. Fallback to count of team members listed (lower bound)
     if team_count >= 2:
         bucket = _to_size_bucket(team_count)
         snippet = f"Counted {team_count} team members listed on {source_url}"
@@ -612,7 +684,7 @@ def _extract_org_size(soup: BeautifulSoup, source_url: str, team_count: int = 0)
         ))
         return candidates
 
-    # 3. Else "Not found" — never guess
+    # 4. Else "Not found" — never guess
     candidates.append(Candidate(
         "org_size", "Not found", source_url, "No stated team size or team list found on public pages",
         "html_content", "Not found"
@@ -627,8 +699,8 @@ def _extract_org_size(soup: BeautifulSoup, source_url: str, team_count: int = 0)
 def _extract_about_page(soup: BeautifulSoup, source_url: str) -> list[Candidate]:
     """
     Look for person names + designations on about/team/leadership pages.
-    Chooses the most senior person as owner.
-    Always marks owner/designation as 'Needs review'.
+    Chooses the most senior person as owner ONLY when an executive role is established (ranks 1-4).
+    If a person's role is not established or non-executive, labels them 'Role unverified' or omits them.
     Also extracts org_size.
     """
     candidates: list[Candidate] = []
@@ -638,18 +710,43 @@ def _extract_about_page(soup: BeautifulSoup, source_url: str) -> list[Candidate]
     team_members = _extract_team_members(soup, source_url)
 
     if team_members:
-        # Sort by seniority rank (1 = Founder, 2 = MD/CEO, 3 = Principal, ...)
-        team_members.sort(key=lambda x: x[2])
-        senior = team_members[0]
-        # Most senior person as owner
-        candidates.append(Candidate(
-            "owner_name", senior[0], source_url, senior[3],
-            "html_content", "Needs review",
-        ))
-        candidates.append(Candidate(
-            "designation", senior[1], source_url, senior[3],
-            "html_content", "Needs review",
-        ))
+        # Filter for genuine executive roles: Founder, MD, CEO, Principal Architect, Partner, Director (ranks 1-4)
+        executive_members = [
+            m for m in team_members
+            if m[2] <= 4 and m[1] not in ("Role unverified", "Architect", "Interior Designer")
+        ]
+        if executive_members:
+            # Sort by seniority rank (1 = Founder, 2 = MD/CEO, 3 = Principal, 4 = Partner/Director)
+            executive_members.sort(key=lambda x: x[2])
+            senior = executive_members[0]
+            status = "Source-supported" if senior[2] == 1 else "Needs review"
+            candidates.append(Candidate(
+                "owner_name", senior[0], source_url, senior[3],
+                "html_content", status,
+            ))
+            candidates.append(Candidate(
+                "designation", senior[1], source_url, senior[3],
+                "html_content", status,
+            ))
+        else:
+            # If team members found but none have verified executive roles:
+            for m in team_members[:3]:
+                candidates.append(Candidate(
+                    "person_mention", m[0], source_url, m[3],
+                    "html_content", "Needs review",
+                    rejection_reason=f"Role '{m[1]}' does not establish executive ownership",
+                ))
+            candidates.append(Candidate(
+                "owner_name", "Not found", source_url,
+                "No executive or founder designation found in source",
+                "html_content", "Not found",
+            ))
+            candidates.append(Candidate(
+                "designation", "Not found", source_url,
+                "No executive or founder designation found in source",
+                "html_content", "Not found",
+            ))
+
     # Org size from this page
     candidates.extend(_extract_org_size(soup, source_url, team_count=len(team_members)))
 
@@ -772,24 +869,113 @@ _CITY_RE = re.compile(
     r"\b(" + "|".join(re.escape(c) for c in _INDIA_CITIES) + r")\b",
     re.IGNORECASE,
 )
+_HQ_RE = re.compile(
+    r"\b(?:headquarters|head\s+office|corporate\s+office|registered\s+office|regd\.\s*office|main\s+office|h\.?q\.?)[\s:–—,-]+([A-Za-z\s,]+)",
+    re.I,
+)
+_PROJECT_CITY_RE = re.compile(
+    r"\b(?:\d+\s*BHK\s+(?:Home|Apartment|Villa|Flat)\s+In|projects?\s+(?:in|across|at)|homes?\s+(?:in|across|at)|villas?\s+(?:in|across|at)|location\s+(?:bengaluru|chennai|coimbatore|hyderabad|mumbai|pune))\s+([A-Za-z\s,]+)",
+    re.I,
+)
 
 
 def _extract_city(soup: BeautifulSoup, source_url: str, market_city: Optional[str] = None) -> list[Candidate]:
+    """
+    Extract city with strict separation of:
+    - Headquarters / Registered office
+    - Branch or experience centre locations
+    - Project locations
+    Never assigns headquarters based solely on project locations (e.g. Mumbai projects).
+    If headquarters cannot be established, returns 'Not verified'.
+    """
+    candidates: list[Candidate] = []
     text = soup.get_text(separator=" ", strip=True)
+
+    # 1. Explicit headquarters / registered office markers
+    m_hq = _HQ_RE.search(text)
+    if m_hq:
+        raw_hq = m_hq.group(1)
+        city_m = _CITY_RE.search(raw_hq)
+        if city_m:
+            hq_city = city_m.group(0).title()
+            start = max(0, m_hq.start() - 20)
+            end = min(len(text), m_hq.end() + 40)
+            snippet = _snippet(text[start:end])
+            candidates.append(Candidate("city", hq_city, source_url, snippet, "html_content", "Source-supported"))
+            candidates.append(Candidate("headquarters", hq_city, source_url, snippet, "html_content", "Source-supported"))
+            return candidates
+
+    # 2. If contact page has a dedicated office address (e.g. "<p>Office: Mumbai, Maharashtra</p>")
+    path_lower = urllib.parse.urlparse(source_url).path.lower()
+    is_contact_page = "contact" in path_lower
+    if is_contact_page:
+        for el in soup.find_all(["p", "div", "span", "address"]):
+            el_text = el.get_text(separator=" ", strip=True)
+            if re.search(r"\b(office|address|reach us|location|visit us)\b", el_text, re.I):
+                city_m = _CITY_RE.search(el_text)
+                if city_m:
+                    city = city_m.group(0).title()
+                    snippet = _snippet(el_text)
+                    candidates.append(Candidate("city", city, source_url, snippet, "html_content", "Source-supported"))
+                    candidates.append(Candidate("headquarters", city, source_url, snippet, "html_content", "Source-supported"))
+                    return candidates
+
+    # 3. Detect project locations (must NOT be assigned as headquarters)
+    project_cities = set()
+    for container in soup.find_all(["article", "section", "div"], class_=True):
+        cls_str = " ".join(container.get("class", [])).lower()
+        if any(k in cls_str for k in ("project", "portfolio", "work", "recent-project")):
+            c_text = container.get_text(separator=" ", strip=True)
+            for m in _CITY_RE.finditer(c_text):
+                project_cities.add(m.group(0).title())
+
+    # Text-level project patterns (e.g. "2 BHK Home In Mumbai", "projects in Mumbai")
+    for m in _PROJECT_CITY_RE.finditer(text):
+        matched_str = m.group(0)
+        for cm in _CITY_RE.finditer(matched_str):
+            project_cities.add(cm.group(0).title())
+
+    if project_cities:
+        for pc in sorted(list(project_cities)):
+            idx = text.lower().find(pc.lower())
+            p_snippet = _snippet(text[max(0, idx - 40): idx + len(pc) + 40])
+            candidates.append(Candidate("project_location", pc, source_url, p_snippet, "html_content", "Extracted"))
+
+        # Headquarters is NOT established by project locations
+        candidates.append(Candidate(
+            "city", "Not verified", source_url,
+            f"Project locations found ({', '.join(sorted(project_cities))}), but company headquarters is not verified in source",
+            "html_content", "Needs review",
+            rejection_reason="Project locations do not establish company headquarters",
+        ))
+        candidates.append(Candidate(
+            "headquarters", "Not verified", source_url,
+            "Headquarters not verified from project locations",
+            "html_content", "Needs review",
+            rejection_reason="Project locations do not establish company headquarters",
+        ))
+        return candidates
+
+    # 4. If general city mentions exist outside project sections:
     matches = _CITY_RE.findall(text)
     if matches:
         from collections import Counter
         city = Counter(m.title() for m in matches).most_common(1)[0][0]
         idx = text.lower().find(city.lower())
         snippet = _snippet(text[max(0, idx - 60): idx + len(city) + 60])
-        return [Candidate("city", city, source_url, snippet, "html_content", "Extracted")]
+        candidates.append(Candidate(
+            "city", city, source_url, snippet, "html_content", "Needs review",
+            rejection_reason="Mentioned in page text without explicit headquarters designation",
+        ))
+        return candidates
 
-    # If no city is found in the fetched HTML, output "Not found". Do not infer.
-    return [Candidate(
+    # 5. If no city is found in the fetched HTML, output "Not found". Do not infer.
+    candidates.append(Candidate(
         "city", "Not found", source_url,
         "No city found in fetched HTML",
         "html_content", "Not found",
-    )]
+    ))
+    return candidates
 
 
 # ─── Website field ────────────────────────────────────────────────────────────
@@ -958,6 +1144,41 @@ def _extract_website(source_url: str) -> Candidate:
 
 # ─── Main extraction entry point ─────────────────────────────────────────────
 
+def validate_candidate_evidence(c: Candidate) -> Candidate:
+    """
+    Validate that candidate evidence actually supports the claimed field.
+    Enforces strict requirements:
+    - Never assigns executive role based only on a person's name or testimonial/sales mention.
+    - Project locations do not establish company headquarters.
+    - Designer-count statements do not support total employee count without qualification.
+    """
+    text = (c.supporting_text or "").lower()
+
+    if c.field_name in ("owner_name", "designation"):
+        if any(kw in text for kw in ("sales team led by", "sales lead", "customer review", "testimonial", "client review", "designer nikita", "project manager", "made our home")):
+            c.verification_status = "Rejected"
+            c.rejection_reason = "Mention in sales/testimonial context does not establish executive role"
+        elif c.value in ("Not found", None):
+            c.verification_status = "Not found"
+
+    elif c.field_name in ("city", "headquarters"):
+        if any(kw in text for kw in ("bhk home in", "project in", "projects in", "villa in", "apartment in", "location bengaluru chennai")):
+            if c.value != "Not verified":
+                c.verification_status = "Rejected"
+                c.rejection_reason = "Project or customer home location does not establish company headquarters"
+            else:
+                c.verification_status = "Needs review"
+                c.rejection_reason = "Project locations found, but headquarters unverified"
+
+    elif c.field_name == "org_size":
+        if "designers" in text and "designers" in (c.value or "").lower():
+            c.verification_status = "Source-supported"
+        elif c.value in ("Not found", None):
+            c.verification_status = "Not found"
+
+    return c
+
+
 def extract(
     html: str,
     source_url: str,
@@ -1005,7 +1226,7 @@ def extract(
     candidates.append(_extract_website(source_url))
 
     # City (JSON-LD addresses take precedence, then HTML text)
-    if not any(c.field_name == "city" and c.value and c.value != "Not found" for c in candidates):
+    if not any(c.field_name == "city" and c.value and c.value not in ("Not found", "Not verified") for c in candidates):
         candidates.extend(_extract_city(soup, source_url, market_city=market_city))
 
     # Gallery images (useful for visual intelligence)
@@ -1034,6 +1255,9 @@ def extract(
         candidates.extend(_extract_services(soup, source_url))
         candidates.extend(_extract_projects(soup, source_url))
         candidates.extend(_extract_awards(soup, source_url))
+
+    # Validate that candidate evidence actually supports the claimed field
+    candidates = [validate_candidate_evidence(c) for c in candidates]
 
     return candidates
 

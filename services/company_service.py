@@ -192,6 +192,7 @@ def _persist_candidates(candidates, company_id: int, db_path=None, conn=None) ->
                     extraction_method=c.method,
                     extracted_at=_now_iso(),
                     verification_status=c.verification_status,
+                    rejection_reason=getattr(c, "rejection_reason", None),
                 )
             except Exception as exc:
                 logger.warning("Failed to persist candidate %s=%s: %s", c.field_name, c.value, exc)
@@ -209,6 +210,7 @@ def _persist_candidates(candidates, company_id: int, db_path=None, conn=None) ->
                         extraction_method=c.method,
                         extracted_at=_now_iso(),
                         verification_status=c.verification_status,
+                        rejection_reason=getattr(c, "rejection_reason", None),
                     )
                 except Exception as exc:
                     logger.warning("Failed to persist candidate %s=%s: %s", c.field_name, c.value, exc)
@@ -391,8 +393,10 @@ def find_and_extract_company_lead(
         "fields": sorted(list({c.field_name for c in hp_candidates})),
     })
 
-    # 2. Discover subpages
+    # 2. Discover subpages (excluding duplicate root URLs with trailing slashes)
     sub_urls = discover_internal_pages(hp.url, hp.html, session=session)
+    clean_hp_url = hp.url.rstrip("/")
+    sub_urls = [u for u in sub_urls if u.rstrip("/") != clean_hp_url]
     log(f"📂 Discovered {len(sub_urls)} sub-pages to crawl for complete executive details...")
 
     for i, sub_url in enumerate(sub_urls[:8], start=1):
@@ -423,6 +427,7 @@ def find_and_extract_company_lead(
             "method": c.method,
             "supporting_text": c.supporting_text,
             "verification_status": c.verification_status,
+            "rejection_reason": getattr(c, "rejection_reason", None),
         })
 
     # Core fields selection
@@ -445,29 +450,58 @@ def find_and_extract_company_lead(
                 break
     org_name = org_name or domain
 
-    owner_item = (field_sources.get("owner_name") or [None])[0]
-    owner_name = owner_item["value"] if owner_item and owner_item.get("value") and owner_item["value"] != "Not found" else "Not found"
-    owner_status = owner_item["verification_status"] if owner_item and owner_name != "Not found" else "Not found"
+    # Filter owner candidates: exclude Rejected, Not found, and Role unverified
+    valid_owners = [
+        item for item in field_sources.get("owner_name", [])
+        if item.get("value") and item["value"] not in ("Not found", "Role unverified")
+        and item.get("verification_status") != "Rejected"
+    ]
+    # Prioritize Source-supported from subpages / about pages
+    valid_owners.sort(key=lambda x: (
+        0 if x.get("verification_status") == "Source-supported" else 1,
+        0 if any(sub in (x.get("source_url") or "") for sub in ("about", "team", "leadership")) else 1
+    ))
+    owner_item = valid_owners[0] if valid_owners else None
+    owner_name = owner_item["value"] if owner_item else "Not found"
+    owner_status = owner_item["verification_status"] if owner_item else "Not found"
 
-    # Only output designation if a person name was also found. Otherwise "Not found".
+    # Designation
     if owner_name == "Not found" or not owner_name:
         designation = "Not found"
     else:
-        desig_item = (field_sources.get("designation") or [None])[0]
-        designation = desig_item["value"] if desig_item and desig_item.get("value") and desig_item["value"] != "Not found" else "Not found"
+        owner_src = owner_item.get("source_url") if owner_item else ""
+        valid_desigs = [
+            item for item in field_sources.get("designation", [])
+            if item.get("value") and item["value"] not in ("Not found", "Role unverified")
+            and item.get("verification_status") != "Rejected"
+        ]
+        matched_desig = [d for d in valid_desigs if d.get("source_url") == owner_src]
+        desig_item = matched_desig[0] if matched_desig else (valid_desigs[0] if valid_desigs else None)
+        designation = desig_item["value"] if desig_item else "Not found"
 
-    size_item = (field_sources.get("org_size") or [None])[0]
+    # Org size: prioritize specialist qualified statements (e.g. "400+ designers (company-stated)")
+    valid_sizes = [
+        item for item in field_sources.get("org_size", [])
+        if item.get("value") and item["value"] != "Not found"
+    ]
+    valid_sizes.sort(key=lambda x: 0 if "company-stated" in (x.get("value") or "") else 1)
+    size_item = valid_sizes[0] if valid_sizes else None
     org_size = size_item["value"] if size_item else "Not found"
 
     basis_item = (field_sources.get("org_size_basis") or [None])[0]
     org_size_basis = basis_item["value"] if basis_item else "not_found"
 
-    city_item = None
-    for item in field_sources.get("city", []):
-        if item.get("value") and item["value"] != "Not found":
-            city_item = item
-            break
-    city = city_item["value"] if city_item else "Not found"
+    # City: only accept verified headquarters/office locations, not project locations
+    valid_cities = [
+        item for item in field_sources.get("city", [])
+        if item.get("value") and item["value"] not in ("Not found", "Not verified")
+        and item.get("verification_status") not in ("Rejected", "Not found")
+    ]
+    valid_cities.sort(key=lambda x: 0 if x.get("verification_status") == "Source-supported" else 1)
+    if valid_cities:
+        city = valid_cities[0]["value"]
+    else:
+        city = "Not verified"
 
     # Emails
     emails = []
@@ -510,8 +544,22 @@ def find_and_extract_company_lead(
     desc_item = (field_sources.get("description") or [None])[0]
     description = desc_item["value"] if desc_item else None
 
-    # Source URLs list
+    # Source URLs list (deduplicated)
     all_source_urls = sorted(list(set(pages_scraped)))
+
+    # Metrics separation: Crawl Coverage vs Claim Verification
+    crawl_coverage = {
+        "pages_crawled": len(all_source_urls),
+        "unique_urls": all_source_urls,
+        "subpages_discovered": len(sub_urls),
+    }
+    claim_verification = {
+        "owner_status": owner_status,
+        "designation": designation,
+        "city_status": "Source-supported" if city != "Not verified" else "Not verified",
+        "org_size_status": size_item["verification_status"] if size_item else "Not found",
+        "org_size_basis": org_size_basis,
+    }
 
     # 4. Persist to Database
     now = _now_iso()
@@ -533,7 +581,7 @@ def find_and_extract_company_lead(
                 designation if designation != "Not found" else None,
                 org_size if org_size != "Not found" else None,
                 org_size_basis if org_size_basis != "not_found" else None,
-                city if city != "Not found" else None,
+                city if city != "Not verified" else None,
                 now,
                 company_id,
             ),
@@ -573,6 +621,8 @@ def find_and_extract_company_lead(
         "source_urls": ", ".join(all_source_urls),
         "source_urls_list": all_source_urls,
         "sources_summary": sources_summary,
+        "crawl_coverage": crawl_coverage,
+        "claim_verification": claim_verification,
         "field_sources": field_sources,
         "resolution": resolution,
         "scraped_at": now,
