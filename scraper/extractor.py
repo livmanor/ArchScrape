@@ -56,10 +56,11 @@ _SOCIAL_DOMAINS: dict[str, str] = {
 
 # ─── Designation patterns ─────────────────────────────────────────────────────
 _DESIGNATION_RE = re.compile(
-    r"\b(Founder|Co-Founder|Principal Architect|Managing Director|Director|"
-    r"CEO|Chief Executive Officer|Partner|Principal|Head of Design|"
-    r"Creative Director|Lead Architect|Senior Architect|Architect|"
-    r"Interior Designer|Design Director|Studio Head)\b",
+    r"\b(Founding Partners?|Co-Founders?|Founders?|Managing Partners?|Managing Directors?|"
+    r"Principal Architects?|Design Directors?|Creative Directors?|Directors?|"
+    r"CEOs?|Chief Executive Officers?|Partners?|Principals?|Head of Design|"
+    r"Lead Architects?|Senior Architects?|Architects?|"
+    r"Interior Designers?|Studio Heads?)\b",
     re.IGNORECASE,
 )
 
@@ -302,11 +303,11 @@ def _extract_meta(soup: BeautifulSoup, source_url: str) -> list[Candidate]:
 
 # ─── Seniority ranking for Owner/Designation ──────────────────────────────────
 _SENIORITY_RANKS: list[tuple[int, re.Pattern]] = [
-    (1, re.compile(r"\b(founder|co-founder|owner|proprietor)\b", re.I)),
-    (2, re.compile(r"\b(managing partner|managing director|ceo|chief executive officer)\b", re.I)),
-    (3, re.compile(r"\b(principal architect|principal)\b", re.I)),
-    (4, re.compile(r"\b(director|partner|design director|creative director|studio head)\b", re.I)),
-    (5, re.compile(r"\b(head of design|lead architect|senior architect|associate architect|architect|interior designer)\b", re.I)),
+    (1, re.compile(r"\b(founders?|co-founders?|founding partners?|owners?|proprietors?)\b", re.I)),
+    (2, re.compile(r"\b(managing partners?|managing directors?|ceos?|chief executive officers?)\b", re.I)),
+    (3, re.compile(r"\b(principal architects?|principals?)\b", re.I)),
+    (4, re.compile(r"\b(directors?|partners?|design directors?|creative directors?|studio heads?)\b", re.I)),
+    (5, re.compile(r"\b(head of design|lead architects?|senior architects?|associate architects?|architects?|interior designers?)\b", re.I)),
 ]
 
 
@@ -571,8 +572,8 @@ def _extract_team_members(soup: BeautifulSoup, source_url: str) -> list[tuple[st
     # Never matches loose "led by" or "headed by" which match sales teams, workshops, or reviews!
     firm_founder_pat = re.compile(
         r"(?:(?:the\s+)?(?:practice|studio|firm|company|agency|atelier|architects)\s+(?:was\s+)?(?:founded|co-founded|established|set\s+up)|"
-        r"\b(?:founded|co-founded|established)\s+(?:in\s+\d{4}\s+)?)\s+by\s+"
-        r"([A-Z][A-Za-z. '\-]{2,35}(?:\s+(?:and|&)\s+[A-Z][A-Za-z. '\-]{2,35})?)",
+        r"\b(?:was\s+)?(?:founded|co-founded|established)(?:\s+in\s+\d{4})?)\s+by\s+"
+        r"([^,.\n]+)",
         re.IGNORECASE,
     )
     for m in firm_founder_pat.finditer(text):
@@ -596,6 +597,8 @@ def _extract_team_members(soup: BeautifulSoup, source_url: str) -> list[tuple[st
                 match_desig = _DESIGNATION_RE.search(surrounding)
                 if match_desig:
                     desig = match_desig.group(0)
+                    if desig.endswith("s") and not desig.lower().endswith("design"):
+                        desig = desig[:-1]
                 elif "co-founded" in m.group(0).lower():
                     desig = "Co-Founder"
                 else:
