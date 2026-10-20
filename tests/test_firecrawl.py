@@ -2,6 +2,8 @@
 tests/test_firecrawl.py — Unit tests for firecrawl_client.py and directory fallback.
 """
 
+import pytest
+
 from scraper.firecrawl_client import (
     SearchHit,
     is_available,
@@ -10,8 +12,13 @@ from scraper.firecrawl_client import (
 )
 
 
+@pytest.mark.network
 def test_invalid_key_connection():
-    """Testing an invalid key should return (False, description)."""
+    """Testing an invalid key should return (False, description).
+    NOTE: This test makes a real HTTP call to the Firecrawl API.
+    Run with: pytest -m network
+    Skip offline: pytest -m "not network"
+    """
     ok, msg = check_firecrawl_conn("invalid_test_key_xyz")
     assert ok is False
     assert "Invalid API key" in msg or "HTTP 401" in msg

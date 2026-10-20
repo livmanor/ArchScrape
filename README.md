@@ -18,7 +18,19 @@ A company intelligence platform that discovers and collects publicly available b
 py -m pip install -r requirements.txt
 ```
 
-### 3. Prepare Your Approved URL List
+### 3. Install Playwright Browsers (Required for JS-rendered Sites)
+
+Many modern architecture firm websites are JavaScript Single Page Applications.
+The Playwright fallback handles these automatically — but the browser must be installed once:
+
+```powershell
+py -m playwright install chromium --with-deps
+```
+
+> **Note:** If you skip this step, the app still works. JS-rendered pages will return empty content
+> instead of failing with an error. The fallback is silent and graceful.
+
+### 4. Prepare Your Approved URL List
 
 Edit `data/seed_urls.csv` with the company websites you want to scrape.
 The file must have these columns:
@@ -59,12 +71,16 @@ The dashboard will open in your browser at `http://localhost:8501`.
 ## Running Tests
 
 ```powershell
+# Run all offline tests (no network required):
 py -m pytest tests/ -v
+
+# Run including live network integration tests (requires internet + Firecrawl reachable):
+py -m pytest tests/ -v -m network
 ```
 
-All tests use synthetic HTML fixtures and temporary databases.
+All offline tests use synthetic HTML fixtures and temporary databases.
 No real company data is embedded in test files.
-No network connections are made during testing.
+Network-dependent tests are marked `@pytest.mark.network` and excluded by default.
 
 ---
 
