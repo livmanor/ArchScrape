@@ -484,3 +484,116 @@ class TestGenericHeadingsAndSocialFiltering:
         assert not owners
         assert not desigs
 
+
+# ─── Verification & Regression Tests (DesignCafe Bug Fixes) ───────────────────
+
+FIXTURE_DESIGNCAFE_HOMEPAGE = """
+<html>
+<head>
+    <title>DesignCafe - Interior Designers in India</title>
+</head>
+<body>
+    <header><h1>DesignCafe</h1></header>
+    <section class="testimonials">
+        <p>The sales team led by Kajol Mishra, designer Nikita and project manager made our home interiors wonderful.</p>
+    </section>
+    <section class="recent-projects">
+        <h2>Our Projects</h2>
+        <div class="project-card">
+            <h3>Modern Minimalistic 4 BHK Home Of Auro Smitha</h3>
+        </div>
+        <div class="project-card">
+            <h3>Megha Malani's 2 BHK Home In Mumbai</h3>
+        </div>
+    </section>
+    <section class="why-us">
+        <p>That is why we have a team of 400+ designers to advise customers. Talk To Us Today!</p>
+    </section>
+</body>
+</html>
+"""
+
+FIXTURE_OFFICIAL_ABOUT_FOUNDER = """
+<html>
+<head>
+    <title>About Us — Morphogenesis Architecture</title>
+</head>
+<body>
+    <div class="about-hero">
+        <h1>About Morphogenesis</h1>
+        <p>Morphogenesis was founded in 1996 by Sonali Rastogi and Manit Rastogi, Founding Partners and Principal Architects.</p>
+        <p>Headquarters: New Delhi, India.</p>
+    </div>
+</body>
+</html>
+"""
+
+
+class TestDesignCafeRegression:
+    def test_unsupported_executive_roles_rejected(self):
+        """Kajol Mishra mentioned in a sales/testimonial snippet must NOT be assigned as owner or executive."""
+        candidates = extract(FIXTURE_DESIGNCAFE_HOMEPAGE, "https://www.designcafe.com/", page_role="homepage")
+        owner_candidates = [c for c in candidates if c.field_name == "owner_name"]
+
+        # Must not assign Kajol Mishra as an accepted executive owner
+        valid_owners = [c for c in owner_candidates if c.value == "Kajol Mishra" and c.verification_status != "Rejected"]
+        assert not valid_owners, "Kajol Mishra must not be assigned as an active owner/founder"
+
+        # Check designations
+        desigs = [c for c in candidates if c.field_name == "designation" and c.verification_status != "Rejected"]
+        assert not any("Kajol Mishra" in (c.supporting_text or "") for c in desigs)
+
+    def test_project_location_not_assigned_as_headquarters(self):
+        """Mumbai mentioned in project title '2 BHK Home In Mumbai' must NOT be assigned as headquarters."""
+        candidates = extract(FIXTURE_DESIGNCAFE_HOMEPAGE, "https://www.designcafe.com/", page_role="homepage")
+
+        # Verify city is 'Not verified' when only project locations exist
+        city_candidates = [c for c in candidates if c.field_name == "city"]
+        assert any(c.value == "Not verified" for c in city_candidates), (
+            "Headquarters must be 'Not verified' when only project locations are present"
+        )
+        # Any candidate claiming Mumbai as city must either be a project_location or have status Rejected / Needs review
+        for c in city_candidates:
+            if c.value == "Mumbai":
+                assert c.verification_status in ("Rejected", "Needs review")
+                assert c.rejection_reason is not None
+
+        # Verify project_location captured Mumbai correctly
+        proj_locs = [c for c in candidates if c.field_name == "project_location"]
+        assert any(c.value == "Mumbai" for c in proj_locs)
+
+    def test_specialist_org_size_preserved(self):
+        """'400+ designers' must be captured as '400+ designers (company-stated)', not generic '200+' bucket."""
+        candidates = extract(FIXTURE_DESIGNCAFE_HOMEPAGE, "https://www.designcafe.com/", page_role="homepage")
+        sizes = [c for c in candidates if c.field_name == "org_size"]
+        bases = [c for c in candidates if c.field_name == "org_size_basis"]
+
+        assert sizes, "Must extract org_size candidate"
+        assert sizes[0].value == "400+ designers (company-stated)"
+        assert sizes[0].value != "200+"
+        assert sizes[0].verification_status == "Source-supported"
+        assert bases[0].value == "stated_designer_count"
+
+
+class TestPositiveFounderExtraction:
+    def test_official_founder_about_page_source_supported(self):
+        """Explicit founder narrative on About Us page must be extracted with Source-supported status."""
+        candidates = extract(FIXTURE_OFFICIAL_ABOUT_FOUNDER, "https://morphogenesis.org/about", page_role="about")
+
+        # Owner candidates
+        owners = [c for c in candidates if c.field_name == "owner_name"]
+        assert owners, "Must extract owner candidate"
+        assert any(name in owners[0].value for name in ("Sonali Rastogi", "Manit Rastogi"))
+        assert owners[0].verification_status == "Source-supported"
+
+        # Designation candidates
+        desigs = [c for c in candidates if c.field_name == "designation"]
+        assert desigs
+        assert any(d.value in ("Founder", "Founding Partner", "Principal Architect") for d in desigs)
+        assert any(d.verification_status == "Source-supported" for d in desigs)
+
+        # Headquarters candidate
+        cities = [c for c in candidates if c.field_name in ("city", "headquarters")]
+        assert any("New Delhi" in (c.value or "") and c.verification_status == "Source-supported" for c in cities)
+
+

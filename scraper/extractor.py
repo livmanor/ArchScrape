@@ -482,13 +482,13 @@ def _extract_contact_page(soup: BeautifulSoup, source_url: str) -> list[Candidat
     return candidates
 
 
-def _extract_team_members(soup: BeautifulSoup, source_url: str) -> list[tuple[str, str, int, str]]:
+def _extract_team_members(soup: BeautifulSoup, source_url: str) -> list[tuple[str, str, int, str, str]]:
     """
-    Finds (name, designation, rank, snippet) tuples from cards, headings, and text patterns.
+    Finds (name, designation, rank, snippet, status) tuples from cards, headings, and text patterns.
     Strictly excludes vendor credits, customer testimonials, client reviews, and sales contacts.
     Never invents titles or assumes unverified roles are founders.
     """
-    team_members: list[tuple[str, str, int, str]] = []
+    team_members: list[tuple[str, str, int, str, str]] = []
     seen_names: set[str] = set()
 
     # 1. Cards with class names like team, member, person, profile, leader
@@ -524,7 +524,7 @@ def _extract_team_members(soup: BeautifulSoup, source_url: str) -> list[tuple[st
                         rank = 99
                     snippet = _snippet(card_text_raw)
                     seen_names.add(name_clean.lower())
-                    team_members.append((name_clean, desig, rank, snippet))
+                    team_members.append((name_clean, desig, rank, snippet, "Needs review"))
 
     # 2. Heading followed by designation in sibling
     for h in soup.find_all(["h2", "h3", "h4", "h5"]):
@@ -543,7 +543,7 @@ def _extract_team_members(soup: BeautifulSoup, source_url: str) -> list[tuple[st
                     rank = _designation_rank(desig)
                     snippet = f"{name_clean} — {sib_text}"
                     seen_names.add(name_clean.lower())
-                    team_members.append((name_clean, desig, rank, snippet))
+                    team_members.append((name_clean, desig, rank, snippet, "Needs review"))
 
     # 3. Text patterns: "Name, Designation" or "Name - Designation"
     text = soup.get_text(separator="\n", strip=True)
@@ -562,7 +562,7 @@ def _extract_team_members(soup: BeautifulSoup, source_url: str) -> list[tuple[st
                 desig = desig_m.group(0)
                 rank = _designation_rank(desig)
                 seen_names.add(cand_name.lower())
-                team_members.append((cand_name, desig, rank, line_clean))
+                team_members.append((cand_name, desig, rank, line_clean, "Needs review"))
 
     # 4. Narrative founder patterns:
     # Requires explicit foundation of the firm/practice/company:
@@ -601,7 +601,7 @@ def _extract_team_members(soup: BeautifulSoup, source_url: str) -> list[tuple[st
                 else:
                     desig = "Founder"
                 rank = _designation_rank(desig)
-                team_members.append((cand_name, desig, rank, snippet))
+                team_members.append((cand_name, desig, rank, snippet, "Source-supported"))
 
     return team_members
 
@@ -719,7 +719,7 @@ def _extract_about_page(soup: BeautifulSoup, source_url: str) -> list[Candidate]
             # Sort by seniority rank (1 = Founder, 2 = MD/CEO, 3 = Principal, 4 = Partner/Director)
             executive_members.sort(key=lambda x: x[2])
             senior = executive_members[0]
-            status = "Source-supported" if senior[2] == 1 else "Needs review"
+            status = senior[4]
             candidates.append(Candidate(
                 "owner_name", senior[0], source_url, senior[3],
                 "html_content", status,

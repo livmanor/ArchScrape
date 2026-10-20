@@ -520,7 +520,7 @@ def get_leads_data(
             designation = designation or "Not found"
         c_org_size = c_org_size or "Not found"
         org_size_basis = org_size_basis or "not_found"
-        c_city = c_city or "Not verified"
+        c_city = c_city or "Not found"
         mobile_str = ", ".join(phones) if phones else "Not found"
         email_str = ", ".join(emails) if emails else "Not found"
         source_urls_list = sorted(list(source_urls))
