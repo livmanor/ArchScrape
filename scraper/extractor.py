@@ -69,7 +69,7 @@ _DESIGNATION_RE = re.compile(
 class Candidate:
     """A single extracted candidate for a given field."""
     __slots__ = ("field_name", "value", "source_url", "supporting_text",
-                 "method", "verification_status")
+                 "method", "verification_status", "rejection_reason")
 
     def __init__(
         self,
@@ -79,6 +79,7 @@ class Candidate:
         supporting_text: Optional[str],
         method: str,
         verification_status: str = "Extracted",
+        rejection_reason: Optional[str] = None,
     ) -> None:
         self.field_name = field_name
         self.value = value
@@ -86,6 +87,7 @@ class Candidate:
         self.supporting_text = supporting_text
         self.method = method
         self.verification_status = verification_status
+        self.rejection_reason = rejection_reason
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────

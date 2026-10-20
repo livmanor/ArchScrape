@@ -44,6 +44,13 @@ def migrate_db(conn: sqlite3.Connection) -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_companies_city ON companies(city)")
     except Exception:
         pass
+
+    # Ensure evidence table has rejection_reason column
+    cur_ev = conn.execute("PRAGMA table_info(evidence)")
+    existing_ev_cols = {row[1] for row in cur_ev.fetchall()}
+    if "rejection_reason" not in existing_ev_cols:
+        conn.execute("ALTER TABLE evidence ADD COLUMN rejection_reason TEXT")
+        logger.info("Migrated evidence table: added column rejection_reason")
     conn.commit()
 
 
@@ -248,6 +255,7 @@ def upsert_evidence(
     extracted_at: str,
     verification_status: str = "Extracted",
     is_primary: int = 1,
+    rejection_reason: str | None = None,
 ) -> int:
     """
     Insert evidence or update supporting_text / timestamp if the same
@@ -266,10 +274,11 @@ def upsert_evidence(
         conn.execute(
             """
             UPDATE evidence
-            SET supporting_text = ?, extracted_at = ?, verification_status = ?
+            SET supporting_text = ?, extracted_at = ?, verification_status = ?,
+                rejection_reason = COALESCE(?, rejection_reason)
             WHERE id = ?
             """,
-            (supporting_text, extracted_at, verification_status, existing["id"]),
+            (supporting_text, extracted_at, verification_status, rejection_reason, existing["id"]),
         )
         return existing["id"]
 
@@ -277,12 +286,12 @@ def upsert_evidence(
         """
         INSERT INTO evidence
             (company_id, field_name, extracted_value, source_url, supporting_text,
-             extraction_method, extracted_at, verification_status, is_primary)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+             extraction_method, extracted_at, verification_status, is_primary, rejection_reason)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             company_id, field_name, extracted_value, source_url, supporting_text,
-            extraction_method, extracted_at, verification_status, is_primary,
+            extraction_method, extracted_at, verification_status, is_primary, rejection_reason,
         ),
     )
     return cur.lastrowid
@@ -462,23 +471,30 @@ def get_leads_data(
                 "team", "our team", "portfolio", "services", "our services"
             ):
                 org_name = val
-            elif fn == "owner_name" and not owner_name and val and val != "Not found":
-                owner_name = val
-                owner_status = stat
-            elif fn == "owner_name" and val and val != "Not found":
-                owner_status = stat
-            elif fn == "designation" and not designation and val and val != "Not found":
-                designation = val
+            elif fn == "owner_name":
+                if stat == "Rejected":
+                    if not owner_name:
+                        owner_status = "Rejected"
+                elif val and val != "Not found" and val != "Role unverified":
+                    if not owner_name or owner_name == "Not found":
+                        owner_name = val
+                        owner_status = stat
+            elif fn == "designation":
+                if stat != "Rejected" and val and val != "Not found" and val != "Role unverified":
+                    if not designation or designation == "Not found":
+                        designation = val
             elif fn == "org_size" and not c_org_size and val and val != "Not found":
                 c_org_size = val
             elif fn == "org_size_basis" and not org_size_basis and val and val != "not_found":
                 org_size_basis = val
-            elif fn == "city" and not c_city and val and val != "Not found":
-                c_city = val
-                city_status = stat
-            elif fn == "city" and val and val != "Not found":
-                c_city = val
-                city_status = stat
+            elif fn == "city":
+                if val == "Not verified" or stat == "Rejected":
+                    if not c_city or c_city == "Not found":
+                        c_city = "Not verified"
+                        city_status = "Needs review" if stat == "Rejected" else stat
+                elif val and val != "Not found":
+                    c_city = val
+                    city_status = stat
             elif fn in ("phone", "mobile") and val:
                 if val not in phones:
                     phones.append(val)
@@ -504,7 +520,7 @@ def get_leads_data(
             designation = designation or "Not found"
         c_org_size = c_org_size or "Not found"
         org_size_basis = org_size_basis or "not_found"
-        c_city = c_city or "Not found"
+        c_city = c_city or "Not verified"
         mobile_str = ", ".join(phones) if phones else "Not found"
         email_str = ", ".join(emails) if emails else "Not found"
         source_urls_list = sorted(list(source_urls))

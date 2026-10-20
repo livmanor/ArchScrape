@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS evidence (
                                         -- Extracted | Source checked | Cross-verified
                                         --            | Not found | Needs review
     is_primary      INTEGER NOT NULL DEFAULT 1,  -- 1 = preferred candidate
+    rejection_reason TEXT,              -- reason if evidence was rejected or flagged
     reviewer_note   TEXT,
     reviewed_at     TEXT,
     UNIQUE(company_id, field_name, extracted_value, source_url)
