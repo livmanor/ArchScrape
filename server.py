@@ -224,11 +224,13 @@ def list_saved_companies(
     try:
         leads = get_leads(
             db_path=DB_PATH,
-            search=search or None,
-            city=city or None,
-            category=category or None,
-            verification_status=status or None,
+            search=search or "",
+            city=city or "",
         )
+        if category and category.lower() != "all":
+            leads = [l for l in leads if category.lower() in str(l.get("category", "")).lower()]
+        if status and status.lower() != "all":
+            leads = [l for l in leads if status.lower() in str(l.get("owner_status", "")).lower() or status.lower() in str(l.get("email_status", "")).lower()]
         total = len(leads)
         paged = leads[offset : offset + limit]
         return {
@@ -308,11 +310,13 @@ def export_leads_csv(
     """Export filtered leads directory as downloadable CSV."""
     leads = get_leads(
         db_path=DB_PATH,
-        search=search or None,
-        city=city or None,
-        category=category or None,
-        verification_status=status or None,
+        search=search or "",
+        city=city or "",
     )
+    if category and category.lower() != "all":
+        leads = [l for l in leads if category.lower() in str(l.get("category", "")).lower()]
+    if status and status.lower() != "all":
+        leads = [l for l in leads if status.lower() in str(l.get("owner_status", "")).lower() or status.lower() in str(l.get("email_status", "")).lower()]
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow([

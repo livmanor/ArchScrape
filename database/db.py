@@ -531,6 +531,10 @@ def get_leads_data(
         source_urls_list = sorted(list(source_urls))
         source_urls_str = ", ".join(source_urls_list)
 
+        website = c["seed_url"] if ("seed_url" in c_cols and c["seed_url"]) else (f"https://{c['domain_key']}" if ("domain_key" in c_cols and c["domain_key"]) else "")
+        domain_key = c["domain_key"] if "domain_key" in c_cols else ""
+        category = c["category"] if ("category" in c_cols and c["category"]) else "architecture"
+
         lead = {
             "id": c_id,
             "owner_name": owner_name,
@@ -540,6 +544,9 @@ def get_leads_data(
             "mobile": mobile_str,
             "email": email_str,
             "city": c_city,
+            "website": website,
+            "domain_key": domain_key,
+            "category": category,
             "source_urls": source_urls_str,
             "source_urls_list": source_urls_list,
             "social_links": socials,
