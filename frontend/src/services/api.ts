@@ -1,5 +1,4 @@
-// frontend/src/services/api.ts
-import {
+import type {
   HealthResponse,
   PresetsResponse,
   SearchResponse,

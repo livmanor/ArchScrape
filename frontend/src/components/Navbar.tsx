@@ -1,7 +1,6 @@
-// frontend/src/components/Navbar.tsx
 import React from 'react';
 import { Building2, Database, Flame, Globe2, BookOpen } from 'lucide-react';
-import { HealthResponse } from '../types';
+import type { HealthResponse } from '../types';
 
 interface NavbarProps {
   activeTab: 'search' | 'directory';
