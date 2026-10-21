@@ -9,7 +9,7 @@ import {
   Check,
   Compass,
 } from 'lucide-react';
-import { SearchHit } from '../types';
+import type { SearchHit } from '../types';
 import { VerificationBadge } from './VerificationBadge';
 
 interface CompanyCardProps {

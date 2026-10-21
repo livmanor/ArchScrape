@@ -1,7 +1,6 @@
-// frontend/src/components/SearchBar.tsx
 import React, { useState } from 'react';
 import { Search, MapPin, Tag, Flame, RefreshCw, Sparkles } from 'lucide-react';
-import { PresetsResponse } from '../types';
+import type { PresetsResponse } from '../types';
 
 interface SearchBarProps {
   onSearch: (params: {

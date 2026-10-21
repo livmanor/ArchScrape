@@ -10,7 +10,7 @@ import {
   HelpCircle,
   CheckCircle,
 } from 'lucide-react';
-import { ResolutionInfo, FieldEvidence } from '../types';
+import type { ResolutionInfo, FieldEvidence } from '../types';
 
 interface DiagnosticsPanelProps {
   resolutionInfo?: ResolutionInfo;
