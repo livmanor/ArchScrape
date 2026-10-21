@@ -172,13 +172,41 @@ def search_companies(
                 continue
             if cat_lower == "architecture" and not any("architect" in s for s in srvs):
                 continue
+
+        # Normalize fields for UI
+        name = d.get("name") or d.get("organisation") or d.get("title") or "Unnamed Practice"
+        snippet = d.get("snippet") or d.get("clean_summary") or d.get("description") or ""
+        v_stat = (d.get("verification_status") or "candidate").lower()
+        if "verified" in v_stat or "extracted" in v_stat:
+            norm_status = "verified"
+            is_ver = True
+        elif "candidate" in v_stat or "review" in v_stat:
+            norm_status = "candidate"
+            is_ver = False
+        else:
+            norm_status = "not_found"
+            is_ver = False
+
+        from urllib.parse import urlparse
+        u = d.get("url") or ""
+        dom = d.get("domain") or (urlparse(u).netloc if u else "")
+
+        d["name"] = name
+        d["snippet"] = snippet
+        d["domain"] = dom
+        d["verified"] = is_ver
+        d["verification_status"] = norm_status
+        d["category"] = d.get("category") or (d.get("services", ["Architecture"])[0] if d.get("services") else "Architecture")
+
         filtered_records.append(d)
 
     return {
         "ok": True,
-        "query": query,
+        "query": clean_q,
         "city": city or "",
         "engine": actual_engine,
+        "source": actual_engine,
+        "count": len(filtered_records),
         "total": len(filtered_records),
         "error": error_msg,
         "results": filtered_records,
