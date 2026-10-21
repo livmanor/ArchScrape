@@ -252,12 +252,12 @@ def get_company_detail(company_id: int):
         company = db.get_company(conn, company_id)
         if not company:
             raise HTTPException(status_code=404, detail="Company not found")
-        evidence = db.get_company_evidence(conn, company_id)
+        evidence = db.get_evidence_for_company(conn, company_id)
 
     return {
         "ok": True,
-        "company": company,
-        "evidence": evidence,
+        "company": dict(company) if company else None,
+        "evidence": [dict(e) for e in evidence],
     }
 
 
