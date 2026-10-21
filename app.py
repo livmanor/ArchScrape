@@ -1004,20 +1004,20 @@ if nav == "🔥 AI Search & Lead Discovery":
                 emails_html = ""
                 if hit.emails:
                     emails_html = " ".join([
-                        f'<a href="mailto:{em}" style="display:inline-flex;align-items:center;gap:4px;'
+                        f'<a href="mailto:{py_html.escape(em)}" style="display:inline-flex;align-items:center;gap:4px;'
                         f'font-size:0.78rem;color:#38bdf8;background:rgba(56,189,248,0.08);'
                         f'padding:3px 9px;border-radius:6px;border:1px solid rgba(56,189,248,0.25);text-decoration:none">'
-                        f'✉️ {em}</a>'
+                        f'✉️ {py_html.escape(em)}</a>'
                         for em in hit.emails[:2]
                     ])
 
                 phones_html = ""
                 if hit.phones:
                     phones_html = " ".join([
-                        f'<a href="tel:{ph}" style="display:inline-flex;align-items:center;gap:4px;'
+                        f'<a href="tel:{py_html.escape(ph)}" style="display:inline-flex;align-items:center;gap:4px;'
                         f'font-size:0.78rem;color:#a7f3d0;background:rgba(16,185,129,0.08);'
                         f'padding:3px 9px;border-radius:6px;border:1px solid rgba(16,185,129,0.25);text-decoration:none">'
-                        f'📞 {ph}</a>'
+                        f'📞 {py_html.escape(ph)}</a>'
                         for ph in hit.phones[:2]
                     ])
 
@@ -1026,7 +1026,7 @@ if nav == "🔥 AI Search & Lead Discovery":
                     for platform, s_url in hit.socials.items():
                         icon = "💼" if platform == "linkedin" else "📷" if platform == "instagram" else "🌐"
                         socials_html += (
-                            f'<a href="{s_url}" target="_blank" style="display:inline-flex;align-items:center;gap:4px;'
+                            f'<a href="{py_html.escape(s_url)}" target="_blank" rel="noopener noreferrer" style="display:inline-flex;align-items:center;gap:4px;'
                             f'font-size:0.76rem;color:#e2e8f0;background:rgba(255,255,255,0.06);'
                             f'padding:3px 8px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);text-decoration:none">'
                             f'{icon} {platform.title()} ↗</a> '
@@ -1037,102 +1037,52 @@ if nav == "🔥 AI Search & Lead Discovery":
                     services_chips = " ".join([
                         f'<span style="font-size:0.72rem;color:#cbd5e1;background:rgba(255,255,255,0.04);'
                         f'padding:2px 8px;border-radius:999px;border:1px solid rgba(255,255,255,0.1)">'
-                        f'{srv}</span>'
+                        f'{py_html.escape(srv)}</span>'
                         for srv in hit.services[:4]
                     ])
 
                 owner_display = (
-                    f'<span style="color:#34d399;font-weight:700">{owner}</span>'
+                    f'<span style="color:#34d399;font-weight:700">{py_html.escape(owner)}</span>'
                     if owner else
                     '<span style="color:#94a3b8;font-style:italic">Needs Review / Not found</span>'
                 )
                 desig_display = (
-                    f'<span style="color:#38bdf8;font-weight:600">{desig}</span>'
+                    f'<span style="color:#38bdf8;font-weight:600">{py_html.escape(desig)}</span>'
                     if desig else
                     '<span style="color:#64748b">Not specified</span>'
                 )
 
-                st.markdown(f"""
-                <div style='background:rgba(255,255,255,0.025);border:1px solid rgba(251,63,0,0.22);
-                            border-radius:16px;padding:22px 26px;margin-bottom:18px;
-                            box-shadow:0 4px 20px rgba(0,0,0,0.2)'>
-                    <div style='display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap'>
-                        <div style='flex:1;min-width:300px'>
-                            <div style='display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px'>
-                                <span style='font-family:Space Grotesk,sans-serif;font-size:1.25rem;
-                                             font-weight:700;color:#f8fafc'>
-                                    🏛️ {org_name}
-                                </span>
-                                <span style='font-size:0.75rem;color:#cbd5e1;background:rgba(255,255,255,0.06);
-                                             padding:2px 8px;border-radius:999px;border:1px solid rgba(255,255,255,0.15)'>
-                                    📍 {city}
-                                </span>
-                                {status_badge}
-                                {source_badge}
-                            </div>
-                            <div style='display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:0.8rem;color:#94a3b8'>
-                                <span>🌐 <code>{domain_tag}</code></span>
-                                <span>•</span>
-                                <span>👥 {hit.org_size}</span>
-                            </div>
-                        </div>
-                        <div>
-                            <a href='{hit.url}' target='_blank'
-                               style='background:rgba(251,63,0,0.15);border:1px solid rgba(251,63,0,0.35);
-                                      color:#fb923c;padding:7px 14px;border-radius:8px;text-decoration:none;
-                                      font-size:0.8rem;font-weight:600;display:inline-flex;align-items:center;gap:4px'>
-                                Visit Official Site ↗
-                            </a>
-                        </div>
-                    </div>
+                summary_text = hit.clean_summary or hit.description or "Verified architecture and design studio lead."
+                summary_text = re.sub(r'<[^>]+>', '', summary_text).strip()
+                summary_text = py_html.unescape(summary_text)
 
-                    <!-- Structured Executive Leadership Row -->
-                    <div style='display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:12px;
-                                background:rgba(0,0,0,0.25);border:1px solid rgba(255,255,255,0.06);
-                                border-radius:10px;padding:12px 16px;margin-bottom:14px'>
-                        <div>
-                            <div style='font-size:0.72rem;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:2px'>
-                                👤 Executive Leader / Owner
-                            </div>
-                            <div style='font-size:0.92rem'>{owner_display}</div>
-                        </div>
-                        <div>
-                            <div style='font-size:0.72rem;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:2px'>
-                                💼 Executive Designation
-                            </div>
-                            <div style='font-size:0.92rem'>{desig_display}</div>
-                        </div>
-                        <div>
-                            <div style='font-size:0.72rem;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:2px'>
-                                📍 Market Headquarters
-                            </div>
-                            <div style='font-size:0.92rem;color:#e2e8f0;font-weight:500'>{city}</div>
-                        </div>
-                        <div>
-                            <div style='font-size:0.72rem;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:2px'>
-                                👥 Firm Headcount
-                            </div>
-                            <div style='font-size:0.92rem;color:#e2e8f0;font-weight:500'>{hit.org_size}</div>
-                        </div>
-                    </div>
-
-                    <!-- Contacts & Social Links -->
-                    <div style='display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px'>
-                        {emails_html if emails_html else "<span style='font-size:0.78rem;color:#64748b'>✉️ No public email detected</span>"}
-                        {phones_html}
-                        {socials_html}
-                    </div>
-
-                    <!-- Services -->
-                    {f"<div style='display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:12px'><span style='font-size:0.72rem;color:#94a3b8;font-weight:600'>SPECIALTIES:</span> {services_chips}</div>" if services_chips else ""}
-
-                    <!-- Clean Executive Summary -->
-                    <div style='font-size:0.86rem;color:#cbd5e1;line-height:1.55;background:rgba(255,255,255,0.015);
-                                border-left:3px solid #fb923c;padding:8px 12px;border-radius:4px'>
-                        {hit.clean_summary or hit.description or "Verified architecture and design studio lead."}
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
+                card_html = (
+                    f"<div style='background:rgba(255,255,255,0.025);border:1px solid rgba(251,63,0,0.22);"
+                    f"border-radius:16px;padding:22px 26px;margin-bottom:18px;box-shadow:0 4px 20px rgba(0,0,0,0.2)'>"
+                    f"<div style='display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap'>"
+                    f"<div style='flex:1;min-width:300px'>"
+                    f"<div style='display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px'>"
+                    f"<span style='font-family:Space Grotesk,sans-serif;font-size:1.25rem;font-weight:700;color:#f8fafc'>🏛️ {py_html.escape(org_name)}</span>"
+                    f"<span style='font-size:0.75rem;color:#cbd5e1;background:rgba(255,255,255,0.06);padding:2px 8px;border-radius:999px;border:1px solid rgba(255,255,255,0.15)'>📍 {py_html.escape(city)}</span>"
+                    f"{status_badge} {source_badge}</div>"
+                    f"<div style='display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:0.8rem;color:#94a3b8'>"
+                    f"<span>🌐 <code>{py_html.escape(domain_tag)}</code></span><span>•</span>"
+                    f"<span>👥 {py_html.escape(hit.org_size)}</span></div></div>"
+                    f"<div><a href='{py_html.escape(hit.url)}' target='_blank' rel='noopener noreferrer' "
+                    f"style='background:rgba(251,63,0,0.15);border:1px solid rgba(251,63,0,0.35);color:#fb923c;padding:7px 14px;border-radius:8px;text-decoration:none;font-size:0.8rem;font-weight:600;display:inline-flex;align-items:center;gap:4px'>"
+                    f"Visit Official Site ↗</a></div></div>"
+                    f"<div style='display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:12px;background:rgba(0,0,0,0.25);border:1px solid rgba(255,255,255,0.06);border-radius:10px;padding:12px 16px;margin-bottom:14px'>"
+                    f"<div><div style='font-size:0.72rem;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:2px'>👤 Executive Leader / Owner</div><div style='font-size:0.92rem'>{owner_display}</div></div>"
+                    f"<div><div style='font-size:0.72rem;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:2px'>💼 Executive Designation</div><div style='font-size:0.92rem'>{desig_display}</div></div>"
+                    f"<div><div style='font-size:0.72rem;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:2px'>📍 Market Headquarters</div><div style='font-size:0.92rem;color:#e2e8f0;font-weight:500'>{py_html.escape(city)}</div></div>"
+                    f"<div><div style='font-size:0.72rem;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:2px'>👥 Firm Headcount</div><div style='font-size:0.92rem;color:#e2e8f0;font-weight:500'>{py_html.escape(hit.org_size)}</div></div></div>"
+                    f"<div style='display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px'>"
+                    f"{emails_html if emails_html else \"<span style='font-size:0.78rem;color:#64748b'>✉️ No public email detected</span>\"} {phones_html} {socials_html}</div>"
+                    f"{f\"<div style='display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:12px'><span style='font-size:0.72rem;color:#94a3b8;font-weight:600'>SPECIALTIES:</span> {services_chips}</div>\" if services_chips else ''}"
+                    f"<div style='font-size:0.86rem;color:#cbd5e1;line-height:1.55;background:rgba(255,255,255,0.015);border-left:3px solid #fb923c;padding:8px 12px;border-radius:4px'>"
+                    f"{py_html.escape(summary_text)}</div></div>"
+                )
+                render_html_block(card_html)
 
                 # Card Actions
                 btn_c1, btn_c2, btn_c3 = st.columns([2.5, 2.5, 2])
