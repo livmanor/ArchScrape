@@ -15,9 +15,13 @@ from typing import Optional
 from fastapi import FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from dotenv import load_dotenv
 
 ROOT_DIR = pathlib.Path(__file__).parent
 sys.path.insert(0, str(ROOT_DIR))
+
+# Automatically load environment variables from .env if present
+load_dotenv(ROOT_DIR / ".env")
 
 from database import db
 from scraper.finder import resolve_company_url, get_city_seed_companies
