@@ -57,23 +57,31 @@ app.add_middleware(
 # ─── Request / Response Models ────────────────────────────────────────────────
 
 class AnalyzeRequest(BaseModel):
-    target_input: str = Field(..., description="Company name, domain, or website URL")
+    target_input: Optional[str] = Field(default=None, description="Company name, domain, or website URL")
+    target: Optional[str] = Field(default=None, description="Alias for target_input")
     category: str = Field(default="architecture", description="Industry category: architecture | interior | other")
     market_city: Optional[str] = Field(default="", description="Optional city hint for location matching")
+    deep: Optional[bool] = Field(default=True, description="Perform deep internal page crawl")
 
 
 class SaveLeadRequest(BaseModel):
-    url: str
+    url: Optional[str] = None
+    website: Optional[str] = None
     organisation: Optional[str] = None
+    company_name: Optional[str] = None
     owner_name: Optional[str] = None
     designation: Optional[str] = None
     city: Optional[str] = None
     org_size: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
     emails: list[str] = []
     phones: list[str] = []
     socials: dict[str, str] = {}
+    social_links: dict[str, str] = {}
     services: list[str] = []
     clean_summary: Optional[str] = None
+    description: Optional[str] = None
     category: Optional[str] = "architecture"
 
 
@@ -224,9 +232,9 @@ def analyze_company(req: AnalyzeRequest):
     - Crawl coverage
     - Supporting source URLs for each extracted fact
     """
-    target = req.target_input.strip()
+    target = (req.target_input or req.target or "").strip()
     if not target:
-        raise HTTPException(status_code=400, detail="target_input cannot be empty")
+        raise HTTPException(status_code=400, detail="target cannot be empty")
 
     logger.info("[API Analyze] Starting deep crawl for: %s", target)
     try:
@@ -237,13 +245,77 @@ def analyze_company(req: AnalyzeRequest):
             market_city=req.market_city or "",
         )
         if not result.get("ok"):
+            res_info = result.get("resolution", {})
             return {
                 "ok": False,
-                "error": result.get("error", "Website resolution or crawl failed"),
-                "resolution": result.get("resolution", {}),
-                "target_input": target,
+                "company_name": target,
+                "website": res_info.get("url") or target,
+                "verification_status": "Not Found",
+                "verification_score": 0.0,
+                "city": req.market_city or "",
+                "owner_name": "Not found",
+                "designation": "Not found",
+                "org_size": "Not stated",
+                "email": "Not found",
+                "phone": "Not found",
+                "social_links": {},
+                "services": [],
+                "description": result.get("error", "Website could not be reached or verified"),
+                "source_urls": [],
+                "resolution_info": {
+                    "resolution_source": res_info.get("method") or "heuristic",
+                    "original_url": target,
+                    "verified_url": "",
+                    "pages_scraped": [],
+                    "verification_notes": [result.get("error", "Failed to resolve official domain")],
+                    "scrape_errors": [result.get("error", "Crawl unreachable")],
+                },
+                "field_evidence": [],
             }
-        return result
+
+        # Standardize structured CompanyLead response
+        org_name = result.get("organisation") or result.get("domain") or target
+        website_url = result.get("url") or (f"https://{result['domain']}" if result.get("domain") else target)
+        res_info = result.get("resolution", {})
+        is_verified = bool(res_info.get("found"))
+
+        field_evidence = []
+        for fname, items in result.get("field_sources", {}).items():
+            for it in items:
+                field_evidence.append({
+                    "field_name": fname,
+                    "extracted_value": str(it.get("value", "")),
+                    "verification_status": it.get("verification_status", "Extracted"),
+                    "source_url": it.get("source_url", ""),
+                    "context_text": it.get("context", ""),
+                })
+
+        return {
+            "ok": True,
+            "company_name": org_name,
+            "website": website_url,
+            "verification_status": "Verified" if is_verified else "Candidate",
+            "verification_score": 0.95 if is_verified else 0.5,
+            "city": result.get("city") or "",
+            "owner_name": result.get("owner_name") or "",
+            "designation": result.get("designation") or "",
+            "org_size": result.get("org_size") or "",
+            "email": result.get("email") or "",
+            "phone": result.get("mobile") or "",
+            "social_links": result.get("social_links") or {},
+            "services": result.get("services") or [],
+            "description": result.get("description") or "",
+            "source_urls": result.get("source_urls_list") or [],
+            "resolution_info": {
+                "resolution_source": res_info.get("method") or "heuristic",
+                "original_url": res_info.get("input_query") or target,
+                "verified_url": website_url,
+                "pages_scraped": result.get("source_urls_list", []),
+                "verification_notes": [res_info.get("notes", "Domain confirmed via DNS and content heuristics")],
+                "scrape_errors": [],
+            },
+            "field_evidence": field_evidence,
+        }
     except Exception as exc:
         logger.exception("[API Analyze] Failed for %s", target)
         raise HTTPException(status_code=500, detail=str(exc))
@@ -302,7 +374,27 @@ def get_company_detail(company_id: int):
 @app.post("/api/leads/save")
 def save_lead(req: SaveLeadRequest):
     """Persist an extracted lead directly to the SQLite database."""
-    res = save_structured_lead_to_db(req.dict(), db_path=DB_PATH, category=req.category or "architecture")
+    target_url = req.url or req.website or ""
+    org = req.organisation or req.company_name or ""
+    emails = req.emails or ([req.email] if req.email else [])
+    phones = req.phones or ([req.phone] if req.phone else [])
+    socials = req.socials or req.social_links or {}
+    summary = req.clean_summary or req.description or ""
+
+    lead_dict = {
+        "url": target_url,
+        "organisation": org,
+        "owner_name": req.owner_name or "Not found",
+        "designation": req.designation or "Not found",
+        "city": req.city or "Not found",
+        "org_size": req.org_size or "Not found",
+        "emails": emails,
+        "phones": phones,
+        "socials": socials,
+        "services": req.services or [],
+        "clean_summary": summary,
+    }
+    res = save_structured_lead_to_db(lead_dict, db_path=DB_PATH, category=req.category or "architecture")
     if not res.get("ok"):
         raise HTTPException(status_code=400, detail=res.get("error", "Save failed"))
     return res
