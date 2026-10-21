@@ -1,10 +1,8 @@
-// frontend/src/components/CompanyDetailsModal.tsx
 import React, { useState } from 'react';
 import {
   X,
   ExternalLink,
   MapPin,
-  Building,
   Mail,
   Phone,
   User,
@@ -14,7 +12,7 @@ import {
   Copy,
   Share2,
 } from 'lucide-react';
-import { CompanyLead } from '../types';
+import type { CompanyLead } from '../types';
 import { VerificationBadge } from './VerificationBadge';
 import { DiagnosticsPanel } from './DiagnosticsPanel';
 

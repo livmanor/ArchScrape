@@ -12,7 +12,7 @@ import {
   Filter,
   Eye,
 } from 'lucide-react';
-import { SavedCompanyLead, PresetsResponse, CompanyLead } from '../types';
+import type { SavedCompanyLead, PresetsResponse, CompanyLead } from '../types';
 import { VerificationBadge } from './VerificationBadge';
 import { getExportUrl, getCompanyDetail } from '../services/api';
 
