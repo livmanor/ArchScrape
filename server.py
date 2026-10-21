@@ -102,18 +102,24 @@ def health_check():
 
 @app.get("/api/search")
 def search_companies(
-    query: str = Query(..., min_length=1, description="Company name, keywords, or query"),
+    query: Optional[str] = Query(None, description="Company name, keywords, or query"),
+    q: Optional[str] = Query(None, description="Alias for query"),
     city: Optional[str] = Query(None, description="Filter or target city"),
     category: Optional[str] = Query(None, description="Industry category filter"),
     engine: str = Query("auto", description="auto | firecrawl | directory"),
+    live: Optional[bool] = Query(None, description="Toggle for live Firecrawl search"),
     limit: int = Query(10, ge=1, le=50, description="Max results to return"),
 ):
     """
     Discover candidate companies from live web (Firecrawl) or curated offline directory.
     Returns structured candidate leads with official site resolution status.
     """
-    clean_q = query.strip()
-    if city and city.strip() and city.lower() not in clean_q.lower():
+    search_term = (query or q or "").strip()
+    if not search_term:
+        search_term = city or "architects"
+
+    clean_q = search_term
+    if city and city.strip() and city.lower() not in clean_q.lower() and city.lower() != "all":
         full_q = f"{clean_q} {city.strip()}"
     else:
         full_q = clean_q
@@ -123,7 +129,11 @@ def search_companies(
 
     # Determine engine
     has_fc = fc_available()
-    if engine == "auto":
+    if live is False:
+        use_fc = False
+    elif live is True:
+        use_fc = has_fc
+    elif engine == "auto":
         use_fc = has_fc
     elif engine == "firecrawl":
         use_fc = has_fc
