@@ -77,7 +77,32 @@ class SearchHit:
         }
 
 
+import html as py_html
+
 # ─── Structured Lead Extraction Rules ────────────────────────────────────────
+
+_EXCLUDED_DOMAINS = {
+    "youtube.com", "youtu.be", "quora.com", "reddit.com", "pinterest.com", "pinterest.in",
+    "facebook.com", "twitter.com", "x.com", "instagram.com", "tiktok.com",
+    "wikipedia.org", "medium.com", "yelp.com", "yellowpages.com", "justdial.com",
+    "sulekha.com", "indiamart.com", "tradeindia.com", "amazon.in", "amazon.com",
+    "flipkart.com", "glassdoor.co.in", "glassdoor.com", "indeed.com", "naukri.com",
+    "linkedin.com",
+}
+
+_INVALID_SOCIAL_PATHS = {
+    "home", "share", "sharer", "sharer.php", "intent", "feed", "explore",
+    "login", "signup", "terms", "privacy", "help", "about", "search", "policies",
+    "pin", "pins", "p", "reel", "reels", "tv", "stories", "watch", "embed",
+    "shorts", "playlist", "status", "hashtag", "intent", "results"
+}
+
+_GENERIC_TITLE_PATTERNS = [
+    re.compile(r'^(?:top|best|leading|cheap and best|popular|recommended|find|discover|affordable)\s+.*\b(?:interior|interiors|architect|architecture|designers?|firms?|companies|studios?|decorators?|services?)\b.*$', re.I),
+    re.compile(r'^\d{1,2}\s+(?:best|top|leading)\s+.*\b(?:interior|interiors|architect|architecture|designers?|firms?)\b.*$', re.I),
+    re.compile(r'^(?:interior designers?|architects?|home interiors?|modular kitchens?)\s+(?:in|near|at)\s+.*$', re.I),
+    re.compile(r'^(?:top modular kitchen designs|best interior designers in \w+|top interior designers in \w+).*$', re.I),
+]
 
 _INVALID_PERSON_WORDS = {
     "about", "team", "our team", "contact", "studio", "practice", "architecture",
@@ -90,7 +115,20 @@ _INVALID_PERSON_WORDS = {
     "ahmedabad", "ncr", "firm", "company", "private", "limited", "pvt", "ltd",
     "solutions", "innovations", "creations", "atelier", "associates", "group",
     "marble", "granite", "wood", "glass", "steel", "concrete", "lighting", "furniture",
-    "contemporary", "sustainable", "urban", "residential", "commercial", "hospitality"
+    "contemporary", "sustainable", "urban", "residential", "commercial", "hospitality",
+    # Stop words, pronouns, auxiliary verbs, and marketing descriptors
+    "are", "we", "the", "proud", "co", "our", "they", "you", "he", "she", "it",
+    "this", "that", "these", "those", "with", "from", "for", "and", "or", "not",
+    "have", "has", "had", "been", "being", "was", "were", "their", "your", "my",
+    "his", "her", "its", "who", "whom", "which", "what", "whose", "why", "how",
+    "when", "where", "get", "got", "make", "made", "meet", "know", "let", "join",
+    "see", "look", "find", "call", "tell", "ask", "help", "helps", "lead", "leads",
+    "best", "top", "good", "great", "new", "old", "first", "last", "high", "low",
+    "big", "small", "large", "next", "early", "young", "important", "few", "public",
+    "same", "able", "expert", "experts", "specialist", "specialists", "professional",
+    "professionals", "passionate", "dedicated", "experienced", "trusted", "skilled",
+    "reputed", "creative", "innovative", "dynamic", "award", "winning", "certified",
+    "licensed", "registered", "qualified", "builder", "builders", "contractor", "contractors"
 }
 
 _CITY_MAP: dict[str, str] = {
@@ -181,8 +219,15 @@ def _clean_single_name(name_str: str) -> Optional[str]:
         return None
     if not all(re.match(r"^[A-Za-z'.-]+$", w) for w in words):
         return None
-    tokens = {w.lower() for w in words}
+    tokens = {w.lower().rstrip(".-") for w in words}
     if tokens & _INVALID_PERSON_WORDS:
+        return None
+    # Reject names containing single/two-letter words that aren't recognized initials
+    for w in words:
+        if len(w) <= 2 and not w.endswith("."):
+            return None
+    # Each word must start with an uppercase letter
+    if not all(w[0].isupper() for w in words if w):
         return None
     return s.title()
 
@@ -202,49 +247,82 @@ def _validate_names(raw_joined_names: str) -> Optional[str]:
     return ", ".join(cleaned[:-1]) + " & " + cleaned[-1]
 
 
-def extract_org_name_from_text(title: str, url: str) -> str:
-    """Extract clean organisation/firm name from title or domain."""
+def extract_org_name_from_text(title: str, url: str, description: str = "") -> str:
+    """
+    Extract clean organisation/firm name from title, url domain, and description.
+    Resolves generic SEO titles (e.g. 'Best Interior Designers in Chennai') into
+    real company brand names (e.g. 'Anbre Interiors', 'Bizzoppo Interiors').
+    """
     t = (title or "").strip()
-    if t:
-        for delim in [" | ", " - ", " – ", " — ", " :: ", " : ", " • ", " · ", " ~ "]:
-            if delim in t:
-                parts = [p.strip() for p in t.split(delim) if p.strip()]
-                for part in parts:
-                    p_lower = part.lower()
-                    if any(kw in p_lower for kw in [
-                        "home", "about", "contact", "official website", "portfolio",
-                        "top architect", "best architect", "leading architect",
-                        "architecture firm", "interior design", "design studio",
-                        "architects in", "designers in", "recent work", "projects",
-                        "reviews", "photos"
-                    ]):
-                        continue
-                    if len(part) >= 2 and not part.isdigit():
-                        return part
-                if parts and len(parts[0]) <= 40:
-                    return parts[0]
 
-        clean_t = re.sub(
-            r"\s*[\-\|•:–—]\s*(Home|Official Website|About|Contact|Top Architects?|Best Architects?|Leading Architecture.*|Architects? in [A-Za-z]+|Interior Designers? in [A-Za-z]+|Architecture & Interior Design.*|Architecture firm.*|Architecture Studio|India).*$",
-            "",
-            t,
-            flags=re.I,
-        ).strip()
-        if clean_t and 2 <= len(clean_t) <= 50:
-            return clean_t
-
+    # Determine domain brand name as strong anchor
+    domain_brand = ""
     try:
         parsed = urllib.parse.urlparse(url if url.startswith("http") else f"https://{url}")
         domain = parsed.netloc.lower().lstrip("www.")
-        brand = domain.split(".")[0]
-        brand = re.sub(r"[-_]", " ", brand)
-        if brand.lower() in ("facebook", "linkedin", "instagram", "twitter", "houzz", "behance"):
-            path = parsed.path.strip("/").split("/")[0]
-            if path:
-                return path.replace("-", " ").replace("_", " ").title()
-        return brand.title()
+        raw_brand = domain.split(".")[0]
+        raw_brand = re.sub(r"[-_]", " ", raw_brand).strip()
+        if raw_brand and raw_brand.lower() not in (
+            "facebook", "linkedin", "instagram", "twitter", "houzz", "behance", "youtube", "quora"
+        ):
+            domain_brand = raw_brand.title()
     except Exception:
-        return t or "Unknown Organisation"
+        pass
+
+    # Check if the title is a generic SEO title
+    is_generic_title = any(p.match(t) for p in _GENERIC_TITLE_PATTERNS)
+
+    # 1. If title has standard brand delimiters, inspect parts
+    for delim in [" | ", " - ", " – ", " — ", " :: ", " : ", " • ", " · ", " ~ "]:
+        if delim in t:
+            parts = [p.strip() for p in t.split(delim) if p.strip()]
+            for part in parts:
+                p_lower = part.lower()
+                if any(kw in p_lower for kw in [
+                    "home", "about", "contact", "official website", "portfolio",
+                    "top architect", "best architect", "leading architect",
+                    "architecture firm", "interior design", "design studio",
+                    "architects in", "designers in", "recent work", "projects",
+                    "reviews", "photos"
+                ]):
+                    continue
+                if any(p.match(part) for p in _GENERIC_TITLE_PATTERNS):
+                    continue
+                if len(part) >= 2 and not part.isdigit():
+                    return part
+
+    # 2. If title is generic (e.g. "Top Modular Kitchen Designs" or "Best Interior Designers in Chennai"),
+    # look in description or domain for the true business name
+    if is_generic_title or not t:
+        if domain_brand:
+            # Check if domain brand appears in description, e.g. "Anbre: Best home interiors..." -> "Anbre Interiors"
+            desc_text = f"{t} {description}"
+            m_brand_ext = re.search(
+                rf'\b({re.escape(domain_brand)}(?:\s+(?:Interiors?|Architects?|Designs?|Studio|Decorators?|Solutions|Living))?)\b',
+                desc_text,
+                re.I,
+            )
+            if m_brand_ext:
+                candidate = m_brand_ext.group(1).strip()
+                if 2 <= len(candidate) <= 40:
+                    return candidate.title()
+            return domain_brand
+
+    # 3. Clean trailing SEO phrases from title
+    clean_t = re.sub(
+        r"\s*[\-\|•:–—]\s*(Home|Official Website|About|Contact|Top Architects?|Best Architects?|Leading Architecture.*|Architects? in [A-Za-z]+|Interior Designers? in [A-Za-z]+|Architecture & Interior Design.*|Architecture firm.*|Architecture Studio|India).*$",
+        "",
+        t,
+        flags=re.I,
+    ).strip()
+
+    if clean_t and not any(p.match(clean_t) for p in _GENERIC_TITLE_PATTERNS) and 2 <= len(clean_t) <= 45:
+        return clean_t
+
+    if domain_brand:
+        return domain_brand
+
+    return t or "Unknown Organisation"
 
 
 def extract_owner_and_designation(text: str) -> tuple[str, str]:
@@ -292,7 +370,7 @@ def extract_owner_and_designation(text: str) -> tuple[str, str]:
 
     # Pattern 3: Name, Designation
     pat3 = re.search(
-        r'(?:(?:Ar\.?|Architect)\s+)?([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\s*(?:,\s*|\s*[\-\–]\s*)'
+        r'(?:(?:Ar\.?|Architect)\s+)?([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\s*(?:,\s*|\s+[\-\–]\s+)'
         r'(?:is\s+(?:the\s+)?)?(Founder(?:\s*(?:and|&)\s*(?:Principal Architect|CEO|Managing Director|Partner))?|Co-Founder|Principal Architect|Managing Director|Creative Director|Design Director|Studio Head|Partner|Principal)',
         text,
         re.I,
@@ -333,12 +411,41 @@ def extract_owner_and_designation(text: str) -> tuple[str, str]:
 
 
 def extract_city(text: str, query: str = "") -> str:
-    """Detect city or metropolitan area from content or query."""
-    combined = f"{text} {query}".lower()
+    """Detect city or metropolitan area from query or content."""
+    query_lower = (query or "").lower()
+    text_lower = (text or "").lower()
+
+    # 1. If query explicitly specifies a target city, check if that city is in the query
+    query_matched_city = None
     for k in sorted(_CITY_MAP.keys(), key=len, reverse=True):
         pattern = r"\b" + re.escape(k) + r"\b"
-        if re.search(pattern, combined):
-            return _CITY_MAP[k]
+        if re.search(pattern, query_lower):
+            query_matched_city = _CITY_MAP[k]
+            break
+
+    # If query specified a city and text mentions it (or any of its aliases), prioritize it!
+    if query_matched_city:
+        for k, v in _CITY_MAP.items():
+            if v == query_matched_city:
+                if re.search(r"\b" + re.escape(k) + r"\b", text_lower):
+                    return query_matched_city
+
+    # 2. Count mentions of all cities in text to find the most prominent one
+    city_counts: dict[str, int] = {}
+    for k, v in _CITY_MAP.items():
+        pattern = r"\b" + re.escape(k) + r"\b"
+        matches = len(re.findall(pattern, text_lower))
+        if matches > 0:
+            city_counts[v] = city_counts.get(v, 0) + matches
+
+    if city_counts:
+        # Return city with highest frequency
+        best_city = max(city_counts.items(), key=lambda item: item[1])[0]
+        return best_city
+
+    if query_matched_city:
+        return query_matched_city
+
     return "Not stated"
 
 
@@ -377,18 +484,34 @@ def extract_socials(text: str) -> dict[str, str]:
     socials: dict[str, str] = {}
     urls = re.findall(r'https?://[^\s\)\]\"\'>]+', text)
     for u in urls:
-        u_clean = u.rstrip(".,;:)")
+        u_clean = u.rstrip(".,;:)\"'>")
         try:
             parsed = urllib.parse.urlparse(u_clean)
             domain = parsed.netloc.lower().lstrip("www.")
             for sd, field_name in _SOCIAL_PLATFORMS.items():
                 if sd in domain and field_name not in socials:
-                    path = parsed.path.strip("/")
-                    if not path or path.lower() in (
-                        "home", "share", "sharer", "sharer.php", "intent",
-                        "feed", "explore", "login", "signup"
-                    ):
+                    path_parts = [p for p in parsed.path.strip("/").split("/") if p]
+                    if not path_parts:
                         continue
+                    first_segment = path_parts[0].lower()
+                    if first_segment in _INVALID_SOCIAL_PATHS:
+                        continue
+                    # YouTube channels/profiles must be @handle, c/, channel/, or user/
+                    if field_name == "youtube":
+                        if not (first_segment.startswith("@") or first_segment in ("c", "channel", "user")):
+                            continue
+                    # Twitter/X profile check
+                    if field_name == "twitter":
+                        if first_segment in ("intent", "share", "status", "search", "hashtag"):
+                            continue
+                    # LinkedIn profile check
+                    if field_name == "linkedin":
+                        if first_segment not in ("company", "school", "in"):
+                            continue
+                    # Instagram profile check
+                    if field_name == "instagram":
+                        if first_segment in ("p", "reel", "tv", "stories", "explore"):
+                            continue
                     socials[field_name] = u_clean
         except Exception:
             continue
@@ -408,13 +531,9 @@ def extract_services(text: str) -> list[str]:
 
 
 def extract_clean_summary(description: str, markdown: str) -> str:
-    """Generate a clean executive summary without raw code or markdown clutter."""
-    if description and len(description.strip()) > 30 and not description.strip().startswith("["):
-        clean = re.sub(r'\[(.*?)\]\(.*?\)', r'\1', description)
-        clean = re.sub(r'\s+', ' ', clean).strip()
-        return clean[:300]
-
-    if markdown:
+    """Generate a clean executive summary without raw code, HTML tags, or markdown clutter."""
+    raw_text = description if (description and len(description.strip()) > 20 and not description.strip().startswith("[")) else ""
+    if not raw_text and markdown:
         lines = [l.strip() for l in markdown.splitlines() if l.strip()]
         content_lines = []
         for l in lines:
@@ -423,12 +542,25 @@ def extract_clean_summary(description: str, markdown: str) -> str:
             if len(l.split()) >= 6:
                 clean_line = re.sub(r'\[(.*?)\]\(.*?\)', r'\1', l)
                 clean_line = re.sub(r'[*_`#]', '', clean_line)
+                clean_line = re.sub(r'<[^>]+>', '', clean_line)
                 clean_line = re.sub(r'\s+', ' ', clean_line).strip()
                 content_lines.append(clean_line)
             if len(" ".join(content_lines)) > 160:
                 break
         if content_lines:
-            return " ".join(content_lines)[:300]
+            raw_text = " ".join(content_lines)
+
+    if raw_text:
+        # Strip markdown links, HTML tags, backticks, asterisks
+        clean = re.sub(r'\[(.*?)\]\(.*?\)', r'\1', raw_text)
+        clean = re.sub(r'<[^>]+>', '', clean)
+        clean = re.sub(r'[*_`#]', '', clean)
+        clean = py_html.unescape(clean)
+        clean = re.sub(r'\s+', ' ', clean).strip()
+        # Clean leading date/rating artifacts e.g. "21 Oct 2023 · ", "Rating 5.0(4,379)"
+        clean = re.sub(r'^(?:\d{1,2}\s+[A-Za-z]{3}\s+\d{4}\s*[·•-]\s*)+', '', clean)
+        clean = re.sub(r'^Rating\s+[\d.]+(?:\([^)]*\))?\s*', '', clean)
+        return clean[:300].strip()
 
     return "Architecture and interior design studio with verified public web profile."
 
@@ -447,7 +579,7 @@ def extract_structured_fields_from_hit(
     """
     combined_text = f"{title}\n{description}\n{markdown}"
 
-    organisation = extract_org_name_from_text(title, url)
+    organisation = extract_org_name_from_text(title, url, description=description)
     owner_name, designation = extract_owner_and_designation(combined_text)
     city = extract_city(combined_text, query)
     emails = extract_emails(combined_text)
@@ -706,17 +838,18 @@ def firecrawl_search(
             "in the search panel or sidebar."
         )
 
-    # Prepare search payload
+    # Prepare search payload with a buffer so filtering social/aggregator domains still leaves requested count
+    fetch_limit = min(limit + 6, 30)
     payload = {
         "query": query,
-        "limit": limit,
+        "limit": fetch_limit,
         "country": country,
         "lang": "en",
     }
     if scrape_content:
         payload["scrapeOptions"] = {"formats": ["markdown"]}
 
-    logger.info("[Firecrawl] search query='%s' limit=%d", query, limit)
+    logger.info("[Firecrawl] search query='%s' limit=%d (fetch_limit=%d)", query, limit, fetch_limit)
 
     def _execute_search(json_payload: dict) -> requests.Response:
         return requests.post(
@@ -788,6 +921,17 @@ def firecrawl_search(
         url = (item.get("url") or "").strip()
         if not url:
             continue
+
+        # Filter out aggregator / social / video / forum domains
+        try:
+            parsed_u = urllib.parse.urlparse(url if url.startswith("http") else f"https://{url}")
+            h_domain = parsed_u.netloc.lower().lstrip("www.")
+            if any(ex in h_domain for ex in _EXCLUDED_DOMAINS):
+                logger.info("[Firecrawl] Skipping non-company domain result: %s", url)
+                continue
+        except Exception:
+            pass
+
         title = (item.get("title") or "").strip()
         description = (item.get("description") or "").strip()
         markdown = (item.get("markdown") or "").strip()
@@ -821,6 +965,9 @@ def firecrawl_search(
             verification_status=structured["verification_status"],
             confidence=structured["confidence"],
         ))
+
+        if len(hits) >= limit:
+            break
 
     logger.info("[Firecrawl] search '%s' → %d structured hits", query, len(hits))
     return hits

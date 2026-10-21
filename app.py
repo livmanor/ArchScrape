@@ -33,6 +33,23 @@ logger = logging.getLogger(__name__)
 DB_PATH  = ROOT / "data" / "archscale.db"
 SEED_CSV = ROOT / "data" / "seed_urls.csv"
 
+import html as py_html
+import re
+
+def render_html_block(html_content: str):
+    """
+    Safely render HTML without Markdown converting indented lines or comments
+    into code blocks (<pre><code>).
+    """
+    if hasattr(st, "html"):
+        st.html(html_content)
+    else:
+        clean_lines = [
+            line.strip() for line in html_content.splitlines()
+            if not line.strip().startswith("<!--")
+        ]
+        st.markdown("\n".join(clean_lines), unsafe_allow_html=True)
+
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="ArchScale Intelligence",
