@@ -32,6 +32,7 @@ from services.company_service import (
     save_structured_lead_to_db,
     get_leads,
 )
+from scraper.lookup_pipeline import lookup_company
 
 logger = logging.getLogger("archscale_api")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-8s %(name)s %(message)s")
@@ -62,6 +63,10 @@ class AnalyzeRequest(BaseModel):
     category: str = Field(default="architecture", description="Industry category: architecture | interior | other")
     market_city: Optional[str] = Field(default="", description="Optional city hint for location matching")
     deep: Optional[bool] = Field(default=True, description="Perform deep internal page crawl")
+
+
+class LookupRequest(BaseModel):
+    name: str = Field(description="Company name to look up (e.g. 'design cafe')")
 
 
 class SaveLeadRequest(BaseModel):
@@ -126,11 +131,8 @@ def search_companies(
     if not search_term:
         search_term = city or "architects"
 
-    clean_q = search_term
-    if city and city.strip() and city.lower() not in clean_q.lower() and city.lower() != "all":
-        full_q = f"{clean_q} {city.strip()}"
-    else:
-        full_q = clean_q
+    # Use the query exactly as entered — no city appending (req. 9)
+    full_q = search_term
 
     hits = []
     actual_engine = engine
@@ -318,6 +320,39 @@ def analyze_company(req: AnalyzeRequest):
         }
     except Exception as exc:
         logger.exception("[API Analyze] Failed for %s", target)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/api/lookup")
+def lookup_company_endpoint(req: LookupRequest):
+    """
+    Unified company lookup pipeline.
+
+    Steps:
+    1. Google Places API (New) text search — name-word match guard.
+       Returns not_found for all fields immediately if no result matches.
+    2. Firecrawl /v1/map to discover contact/about/team sub-pages.
+    3. Firecrawl /v1/scrape on homepage + matched sub-pages
+       (formats: markdown, links, json; waitFor 3000; onlyMainContent false).
+    4. Email: only mailto: links or literal addresses in page text.
+    5. Socials: only links to linkedin/facebook/instagram/x/youtube.
+    6. CEO/designation: only from about/team page text; exact title.
+    7. Verbatim verification on all scraped values.
+    8. Company size: hook for enrichment API (not found until configured).
+    9. Persists to SQLite with source attribution.
+
+    Returns every field as {value, source}.
+    """
+    name = req.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="'name' must not be empty.")
+
+    logger.info("[API Lookup] Starting pipeline for '%s'.", name)
+    try:
+        result = lookup_company(name=name, db_path=DB_PATH)
+        return result
+    except Exception as exc:
+        logger.exception("[API Lookup] Unhandled error for '%s'", name)
         raise HTTPException(status_code=500, detail=str(exc))
 
 
