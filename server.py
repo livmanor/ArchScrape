@@ -344,6 +344,26 @@ def export_leads_csv(
     )
 
 
+# Mount built React SPA frontend if present
+_FRONTEND_DIST = pathlib.Path(__file__).parent / "frontend" / "dist"
+if _FRONTEND_DIST.exists():
+    from fastapi.staticfiles import StaticFiles
+    from starlette.responses import FileResponse
+
+    _assets_dir = _FRONTEND_DIST / "assets"
+    if _assets_dir.exists():
+        app.mount("/assets", StaticFiles(directory=str(_assets_dir)), name="assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    def serve_spa(full_path: str):
+        if full_path.startswith("api/") or full_path == "api":
+            raise HTTPException(status_code=404, detail="API route not found")
+        target_file = _FRONTEND_DIST / full_path
+        if target_file.is_file():
+            return FileResponse(str(target_file))
+        return FileResponse(str(_FRONTEND_DIST / "index.html"))
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("server:app", host="127.0.0.1", port=8000, reload=True)

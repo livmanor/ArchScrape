@@ -1,16 +1,12 @@
-// frontend/src/App.tsx
 import React, { useState, useEffect } from 'react';
 import {
   Globe2,
-  Building,
-  CheckCircle,
   AlertCircle,
   FileSearch,
-  Sparkles,
   ArrowRight,
   ShieldCheck,
 } from 'lucide-react';
-import {
+import type {
   HealthResponse,
   PresetsResponse,
   SearchHit,
