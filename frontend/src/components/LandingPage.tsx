@@ -11,7 +11,6 @@ import {
   Users,
   MapPin,
   Mail,
-  Phone,
   Share2,
   Cpu,
   Layers,

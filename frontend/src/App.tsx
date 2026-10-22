@@ -190,26 +190,35 @@ export const App: React.FC = () => {
         savedCount={savedTotal}
       />
 
-      {/* Main Container */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Error Banners */}
-        {analysisError && (
-          <div className="mb-6 p-4 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-800 flex items-center justify-between">
-            <div className="flex items-center space-x-2">
-              <AlertCircle className="h-4 w-4 text-amber-600 shrink-0" />
-              <span>{analysisError}</span>
-            </div>
-            <button
-              onClick={() => setAnalysisError(null)}
-              className="text-amber-600 hover:text-amber-800 font-bold ml-4"
-            >
-              ✕
-            </button>
-          </div>
-        )}
+      {/* Tab 0: ArchGuild Scrape Landing Page */}
+      {activeTab === 'landing' && (
+        <LandingPage
+          onExploreFinder={() => setActiveTab('search')}
+          onOpenDirectory={() => setActiveTab('directory')}
+        />
+      )}
 
-        {/* Tab 1: Discover Companies (Screen A & Screen B) */}
-        {activeTab === 'search' && (
+      {/* Main Container for Search & Directory */}
+      {activeTab !== 'landing' && (
+        <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 text-slate-900 bg-[#f8fafc] my-4 rounded-2xl shadow-sm border border-slate-200">
+          {/* Error Banners */}
+          {analysisError && (
+            <div className="mb-6 p-4 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-800 flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <AlertCircle className="h-4 w-4 text-amber-600 shrink-0" />
+                <span>{analysisError}</span>
+              </div>
+              <button
+                onClick={() => setAnalysisError(null)}
+                className="text-amber-600 hover:text-amber-800 font-bold ml-4"
+              >
+                ✕
+              </button>
+            </div>
+          )}
+
+          {/* Tab 1: Discover Companies (Screen A & Screen B) */}
+          {activeTab === 'search' && (
           <div>
             {/* Screen A: Search & Presets */}
             <div className="mb-6">
@@ -386,7 +395,8 @@ export const App: React.FC = () => {
             />
           </div>
         )}
-      </main>
+        </main>
+      )}
 
       {/* Screen C: Company Details Modal with Diagnostics */}
       <CompanyDetailsModal
