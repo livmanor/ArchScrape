@@ -119,6 +119,8 @@ class SaveLeadRequest(BaseModel):
 
 # ─── API Endpoints ────────────────────────────────────────────────────────────
 
+@app.get("/")
+@app.get("/health")
 @app.get("/api/health")
 def health_check():
     """System health, SQLite status, and Firecrawl integration availability."""
