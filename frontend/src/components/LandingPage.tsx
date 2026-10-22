@@ -1,24 +1,16 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
   Building2,
-  Sparkles,
   ShieldCheck,
-  Search,
   CheckCircle2,
   XCircle,
   ArrowRight,
   Globe2,
-  Users,
   MapPin,
-  Mail,
-  Share2,
   Cpu,
   Layers,
-  ExternalLink,
   ChevronRight,
-  AlertTriangle,
 } from 'lucide-react';
-import { lookupCompany } from '../services/api';
 
 interface LandingPageProps {
   onExploreFinder: () => void;
@@ -29,82 +21,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   onExploreFinder,
   onOpenDirectory,
 }) => {
-  const [lookupQuery, setLookupQuery] = useState('Archscale Guild');
-  const [isLookingUp, setIsLookingUp] = useState(false);
-  const [lookupResult, setLookupResult] = useState<any | null>(null);
-  const [lookupError, setLookupError] = useState<string | null>(null);
-  const [activeStep, setActiveStep] = useState<number>(0);
-  const samplePresets = [
-    { label: 'Archscale Guild', query: 'Archscale Guild', website: 'https://archscaleguild.com' },
-    { label: 'Design Cafe', query: 'design cafe' },
-    { label: 'Morphogenesis', query: 'morphogenesis' },
-    { label: 'Studio Lotus', query: 'studio lotus' },
-  ];
-
-  const handleTestLookup = async (queryToRun?: string, websiteOverride?: string) => {
-    const q = (queryToRun || lookupQuery).trim();
-    if (!q) return;
-
-    setLookupQuery(q);
-    setIsLookingUp(true);
-    setLookupError(null);
-    setLookupResult(null);
-    setActiveStep(1);
-
-    try {
-      const streamUrl = `/api/lookup/stream?name=${encodeURIComponent(q)}&refresh=true${websiteOverride ? `&website_override=${encodeURIComponent(websiteOverride)}` : ''}`;
-      const eventSource = new EventSource(streamUrl);
-
-      eventSource.addEventListener('places', (e) => {
-        try {
-          const data = JSON.parse(e.data);
-          if (data.match_status === 'matched' && data.website?.value && data.website.value !== 'not found') {
-            setActiveStep(2);
-          }
-        } catch {}
-      });
-
-      eventSource.addEventListener('website', () => {
-        setActiveStep(3);
-      });
-
-      eventSource.addEventListener('intelligence', () => {
-        setActiveStep(4);
-      });
-
-      eventSource.addEventListener('done', (e) => {
-        try {
-          const data = JSON.parse(e.data);
-          setLookupResult(data);
-          setActiveStep(4);
-        } catch {}
-        eventSource.close();
-        setIsLookingUp(false);
-      });
-
-      eventSource.addEventListener('error', () => {
-        eventSource.close();
-        lookupCompany(q, true, websiteOverride)
-          .then((res) => {
-            setLookupResult(res);
-            setActiveStep(4);
-            setIsLookingUp(false);
-          })
-          .catch((err) => {
-            setLookupError(err.message);
-            setIsLookingUp(false);
-          });
-      });
-    } catch (err: any) {
-      setLookupError(err.message);
-      setIsLookingUp(false);
-    }
-  };
-
   return (
     <div className="min-h-screen bg-[#f8fafc] text-slate-800">
       {/* ─── Hero Section ────────────────────────────────────────────── */}
-      <section className="relative overflow-hidden pt-12 pb-20 md:pt-16 md:pb-28 border-b border-slate-200 bg-gradient-to-b from-white via-indigo-50/20 to-[#f8fafc]">
+      <section className="relative overflow-hidden pt-16 pb-20 md:pt-24 md:pb-28 border-b border-slate-200 bg-gradient-to-b from-white via-indigo-50/20 to-[#f8fafc]">
         {/* Subtle Decorative Background Circles */}
         <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-7xl h-full pointer-events-none overflow-hidden">
           <div className="absolute -top-24 left-1/4 w-96 h-96 bg-indigo-100/60 rounded-full blur-3xl opacity-70" />
@@ -113,7 +33,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
 
         <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           {/* Hero Headlines */}
-          <div className="text-center max-w-4xl mx-auto mb-12">
+          <div className="text-center max-w-4xl mx-auto">
             <h1 className="text-4xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight text-slate-900 leading-[1.15] mb-5 font-heading">
               The <span className="text-indigo-600">Zero-Noise</span> Intelligence Engine for Design Practices
             </h1>
@@ -138,228 +58,6 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                 <Layers className="h-4 w-4 text-slate-500" />
                 <span>Saved SQLite Directory</span>
               </button>
-            </div>
-          </div>
-
-          {/* ─── Interactive Live Lookup Terminal Card ──────────────────── */}
-          <div className="max-w-4xl mx-auto">
-            <div className="rounded-2xl border border-slate-200 bg-white shadow-xl p-6 sm:p-8">
-              {/* Card Header */}
-              <div className="flex items-center justify-between border-b border-slate-100 pb-4 mb-6">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-8 h-8 rounded-lg bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600">
-                    <Search className="h-4 w-4" />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-bold text-slate-900">Live Practice Intelligence Engine</h3>
-                    <p className="text-[11px] text-slate-500">Real-time Places & OpenRouter verification</p>
-                  </div>
-                </div>
-                <span className="text-[11px] font-semibold tracking-wider text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-md">
-                  Active Endpoint: /api/lookup
-                </span>
-              </div>
-
-              {/* Input Bar */}
-              <div className="flex flex-col sm:flex-row gap-3 mb-4">
-                <div className="relative flex-1">
-                  <Search className="absolute left-3.5 top-3.5 h-4 w-4 text-slate-400" />
-                  <input
-                    type="text"
-                    value={lookupQuery}
-                    onChange={(e) => setLookupQuery(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleTestLookup()}
-                    placeholder="Enter practice name (e.g. Archscale Guild, Design Cafe)"
-                    className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:bg-white focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600 transition"
-                  />
-                </div>
-                <button
-                  onClick={() => handleTestLookup()}
-                  disabled={isLookingUp}
-                  className="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white text-sm font-semibold rounded-xl transition flex items-center justify-center gap-2 shadow-sm cursor-pointer flex-shrink-0"
-                >
-                  {isLookingUp ? (
-                    <>
-                      <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-                      <span>Inspecting...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Cpu className="h-4 w-4" />
-                      <span>Execute Lookup</span>
-                    </>
-                  )}
-                </button>
-              </div>
-
-              {/* Quick Presets */}
-              <div className="flex flex-wrap items-center gap-2 mb-6">
-                <span className="text-xs font-medium text-slate-500">Quick Test Cases:</span>
-                {samplePresets.map((preset, idx) => (
-                  <button
-                    key={idx}
-                    onClick={() => handleTestLookup(preset.query, (preset as any).website)}
-                    className="text-xs px-2.5 py-1 rounded-lg border border-slate-200 hover:border-indigo-300 bg-slate-50 hover:bg-indigo-50/50 text-slate-600 hover:text-indigo-700 transition cursor-pointer"
-                  >
-                    {preset.label}
-                  </button>
-                ))}
-              </div>
-
-              {/* Pipeline Step Progress Visualizer */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-6">
-                {[
-                  { step: 1, title: 'Places Check', desc: 'Whole-word matching' },
-                  { step: 2, title: 'Firecrawl /map', desc: 'Subpage discovery' },
-                  { step: 3, title: 'OpenRouter AI', desc: 'Gemini 2.0 Flash' },
-                  { step: 4, title: 'Verbatim Guard', desc: 'Aggregator filter' },
-                ].map((item) => (
-                  <div
-                    key={item.step}
-                    className={`p-3 rounded-xl border text-left transition ${
-                      activeStep === item.step
-                        ? 'border-indigo-400 bg-indigo-50 text-indigo-900 ring-2 ring-indigo-200'
-                        : activeStep > item.step
-                        ? 'border-emerald-200 bg-emerald-50/60 text-emerald-900'
-                        : 'border-slate-200 bg-slate-50 text-slate-400'
-                    }`}
-                  >
-                    <div className="flex items-center gap-1.5 text-xs font-semibold mb-0.5">
-                      {activeStep > item.step ? (
-                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 flex-shrink-0" />
-                      ) : (
-                        <span className="w-3.5 h-3.5 rounded-full border border-current text-[9px] flex items-center justify-center">
-                          {item.step}
-                        </span>
-                      )}
-                      <span>{item.title}</span>
-                    </div>
-                    <div className="text-[10px] text-slate-500 pl-5">{item.desc}</div>
-                  </div>
-                ))}
-              </div>
-
-
-
-              {/* Lookup Result Box */}
-              {lookupResult && (
-                <div className="p-5 rounded-xl border border-slate-200 bg-slate-50/60 text-left">
-                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-3 mb-4">
-                    <div>
-                      <div className="text-base font-bold text-slate-900 flex items-center gap-2">
-                        <span>{lookupResult.organisation_name?.value || lookupQuery}</span>
-                        <span
-                          className={`text-xs px-2.5 py-0.5 rounded-full font-semibold ${
-                            lookupResult.match_status === 'matched'
-                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
-                              : lookupResult.match_status === 'ambiguous'
-                              ? 'bg-amber-100 text-amber-800 border border-amber-200'
-                              : 'bg-rose-100 text-rose-800 border border-rose-200'
-                          }`}
-                        >
-                          Status: {lookupResult.match_status}
-                        </span>
-                      </div>
-                      <div className="text-xs text-slate-500 mt-0.5">
-                        {lookupResult.city?.value && lookupResult.city.value !== 'not found' && (
-                          <span className="mr-3">📍 {lookupResult.city.value} (Places addressComponents)</span>
-                        )}
-                        <span>Sourced via: {lookupResult.match_status === 'matched' ? 'Google Places + OpenRouter' : 'Strict Match Gate'}</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Ambiguity Candidates Notice */}
-                  {lookupResult.match_status === 'ambiguous' && lookupResult.candidates && (
-                    <div className="mb-4 p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900">
-                      <div className="font-semibold flex items-center gap-1.5 mb-2 text-amber-800">
-                        <AlertTriangle className="h-4 w-4 text-amber-600" />
-                        Ambiguity Detected: Multiple plausible branches exist. We never pick silently:
-                      </div>
-                      <div className="space-y-1 pl-5">
-                        {lookupResult.candidates.map((cand: any, cidx: number) => (
-                          <div key={cidx} className="text-slate-700">
-                            • <strong>{cand.name}</strong> — {cand.address}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Core Intelligence Grid */}
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs mb-1">
-                    {/* CEO / Leader */}
-                    <div className="p-3.5 rounded-xl border border-slate-200 bg-white shadow-xs">
-                      <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1 flex items-center gap-1.5">
-                        <Users className="h-3.5 w-3.5 text-indigo-600" />
-                        Verified Executive
-                      </div>
-                      <div className="font-bold text-slate-900 text-sm">
-                        {lookupResult.ceo?.name?.value || 'Not stated'}
-                      </div>
-                      <div className="text-slate-500 text-xs mt-0.5">
-                        {lookupResult.ceo?.designation?.value || 'No leader title'}
-                      </div>
-                      {lookupResult.ceo?.name?.source && (
-                        <div className="text-[10px] text-indigo-600 mt-1.5 truncate font-mono">
-                          src: {lookupResult.ceo.name.source}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Contact Channels */}
-                    <div className="p-3.5 rounded-xl border border-slate-200 bg-white shadow-xs">
-                      <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1 flex items-center gap-1.5">
-                        <Mail className="h-3.5 w-3.5 text-indigo-600" />
-                        Contact Channels
-                      </div>
-                      <div className="text-slate-700 truncate">
-                        ✉️ {lookupResult.email?.value !== 'not found' ? lookupResult.email.value : 'No email'}
-                      </div>
-                      <div className="text-slate-700 truncate mt-0.5">
-                        📞 {lookupResult.mobile?.value !== 'not found' ? lookupResult.mobile.value : 'No phone'}
-                      </div>
-                      <div className="text-[10px] text-slate-400 mt-1">
-                        Team Size: {lookupResult.company_size?.value || 'Unstated'}
-                      </div>
-                    </div>
-
-                    {/* Official Verified Socials */}
-                    <div className="p-3.5 rounded-xl border border-slate-200 bg-white shadow-xs">
-                      <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1 flex items-center gap-1.5">
-                        <Share2 className="h-3.5 w-3.5 text-indigo-600" />
-                        Verified Socials
-                      </div>
-                      {lookupResult.socials && Object.keys(lookupResult.socials).length > 0 ? (
-                        <div className="flex flex-wrap gap-1.5 mt-1.5">
-                          {Object.entries(lookupResult.socials).map(([plat, sobj]: [string, any]) => (
-                            <a
-                              key={plat}
-                              href={sobj.value}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-indigo-50 border border-indigo-200 text-xs font-medium text-indigo-700 hover:bg-indigo-100 transition"
-                            >
-                              <span>{plat}</span>
-                              <ExternalLink className="h-3 w-3" />
-                            </a>
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="text-slate-400 text-xs mt-1">No verified official handles</div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Error Notice */}
-              {lookupError && (
-                <div className="p-4 rounded-xl border border-rose-200 bg-rose-50 text-rose-800 text-xs flex items-center gap-2">
-                  <AlertTriangle className="h-4 w-4 text-rose-600 flex-shrink-0" />
-                  <span>{lookupError}</span>
-                </div>
-              )}
             </div>
           </div>
         </div>
