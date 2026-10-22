@@ -84,14 +84,73 @@ import html as py_html
 
 # ─── Structured Lead Extraction Rules ────────────────────────────────────────
 
+# Domains that are aggregator, review, listing, marketplace, social, or forum sites.
+# Any search hit whose domain matches ANY entry here is dropped immediately.
 _EXCLUDED_DOMAINS = {
+    # ── Social / Video / Forums ──────────────────────────────────────────────
     "youtube.com", "youtu.be", "quora.com", "reddit.com", "pinterest.com", "pinterest.in",
     "facebook.com", "twitter.com", "x.com", "instagram.com", "tiktok.com",
-    "wikipedia.org", "medium.com", "yelp.com", "yellowpages.com", "justdial.com",
-    "sulekha.com", "indiamart.com", "tradeindia.com", "amazon.in", "amazon.com",
-    "flipkart.com", "glassdoor.co.in", "glassdoor.com", "indeed.com", "naukri.com",
-    "linkedin.com",
+    "wikipedia.org", "medium.com", "tumblr.com", "blogger.com", "blogspot.com",
+    "snapchat.com", "whatsapp.com",
+
+    # ── Review / Rating sites ────────────────────────────────────────────────
+    "yelp.com", "trustpilot.com", "trustpilot.in", "glassdoor.co.in", "glassdoor.com",
+    "mouthshut.com", "sitejabber.com", "reviews.io", "g2.com", "capterra.com",
+    "ambitionbox.com",
+
+    # ── Indian business / property listing directories ────────────────────────
+    "justdial.com", "sulekha.com", "indiamart.com", "tradeindia.com",
+    "nobroker.in", "nobroker.com",
+    "magicbricks.com", "99acres.com", "housing.com", "makaan.com", "proptiger.com",
+    "commonfloor.com", "squareyards.com",
+    "quikr.com", "olx.in", "olx.com",
+    "urbanclap.com", "urbancompany.com",
+    "houzz.com", "houzz.in",
+    "yellowpages.com", "yellowpages.in",
+    "exotica.in", "homify.in", "homify.com",
+    "buildofy.com", "buildzar.com",
+    "designcafe.com",          # large chain — keep only if user explicitly searches it
+    "livspace.com",            # large chain / marketplace
+    "pepperfry.com", "urban-ladder.com", "urbanladder.com",
+    "coinsurance.com", "policybazaar.com",
+    "zomato.com", "swiggy.com", "blinkit.com",
+    "practo.com", "1mg.com", "lenskart.com",
+    "quickerala.com", "quickrr.com",
+    "servicesutra.com", "getit.in", "asklaila.com",
+    "clickindia.com", "locanto.in",
+    "jdmagicbox.com", "grotal.com", "burrp.com",
+
+    # ── Job boards / recruitment ─────────────────────────────────────────────
+    "naukri.com", "indeed.com", "monster.com", "shine.com", "foundit.in",
+    "timesjobs.com", "freshersworld.com", "internshala.com", "instahyre.com",
+    "linkedin.com", "apna.co",
+
+    # ── E-commerce / Marketplaces ────────────────────────────────────────────
+    "amazon.in", "amazon.com", "flipkart.com", "myntra.com", "meesho.com",
+    "snapdeal.com", "paytmmall.com",
+
+    # ── News / Blog aggregators ──────────────────────────────────────────────
+    "times of india", "timesofindia.com", "hindustan times", "hindustantimes.com",
+    "ndtv.com", "thehindu.com", "moneycontrol.com", "livemint.com",
+    "economictimes.indiatimes.com", "indiatimes.com", "business-standard.com",
+    "outlookindia.com", "scroll.in", "thequint.com", "deccanherald.com",
+    "architecturaldigest.com", "architecturaldigest.in", "elle.in", "elle.com",
+    "architectandinterior.com", "archello.com", "archdaily.com", "dezeen.com",
+    "behance.net", "issuu.com", "slideshare.net",
+    "wikimedia.org", "wikidata.org",
+
+    # ── Maps / local search wrappers ─────────────────────────────────────────
+    "maps.google.com", "goo.gl", "waze.com",
 }
+
+# URL path patterns that indicate a listing / directory / "best X in city" page
+# rather than a real company's own website. Matched against the URL path.
+_LISTING_URL_PATH_RE = re.compile(
+    r"/(best|top|leading|find|hire|compare|all|list-of)[-_]?"
+    r"(interior[-_]?designers?|architects?|architecture|interior[-_]?design|home[-_]?interiors?|decorators?)"
+    r"([-_]in[-_]|[-_]near[-_]|[-_]at[-_]|[-_]\w+[-_]|/)",
+    re.IGNORECASE,
+)
 
 _INVALID_SOCIAL_PATHS = {
     "home", "share", "sharer", "sharer.php", "intent", "feed", "explore",
@@ -105,6 +164,9 @@ _GENERIC_TITLE_PATTERNS = [
     re.compile(r'^\d{1,2}\s+(?:best|top|leading)\s+.*\b(?:interior|interiors|architect|architecture|designers?|firms?)\b.*$', re.I),
     re.compile(r'^(?:interior designers?|architects?|home interiors?|modular kitchens?)\s+(?:in|near|at)\s+.*$', re.I),
     re.compile(r'^(?:top modular kitchen designs|best interior designers in \w+|top interior designers in \w+).*$', re.I),
+    # Review / listing page titles from aggregators
+    re.compile(r'\b(?:reviews?|ratings?|complaints?|listing|directory|verified professionals|hire|compare|find near)\b.*\b(?:interior|architect|design)\b', re.I),
+    re.compile(r'\b(?:interior|architect)\b.*\b(?:reviews?|ratings?|listing|directory|near me|in \w+ city)\b', re.I),
 ]
 
 _INVALID_PERSON_WORDS = {
@@ -925,15 +987,29 @@ def firecrawl_search(
         if not url:
             continue
 
-        # Filter out aggregator / social / video / forum domains
+        # ── Filter 1: excluded domain blocklist ─────────────────────────────
         try:
             parsed_u = urllib.parse.urlparse(url if url.startswith("http") else f"https://{url}")
             h_domain = parsed_u.netloc.lower().lstrip("www.")
             if any(ex in h_domain for ex in _EXCLUDED_DOMAINS):
-                logger.info("[Firecrawl] Skipping non-company domain result: %s", url)
+                logger.info("[Firecrawl] Blocked aggregator domain: %s", url)
                 continue
         except Exception:
             pass
+
+        # ── Filter 2: listing/directory URL path pattern ──────────────────────
+        try:
+            if _LISTING_URL_PATH_RE.search(parsed_u.path):
+                logger.info("[Firecrawl] Blocked listing URL path: %s", url)
+                continue
+        except Exception:
+            pass
+
+        # ── Filter 3: generic listing/review page title ───────────────────────
+        _pre_title = (item.get("title") or "").strip()
+        if _pre_title and any(p.search(_pre_title) for p in _GENERIC_TITLE_PATTERNS):
+            logger.info("[Firecrawl] Blocked listing-style title: %r → %s", _pre_title, url)
+            continue
 
         title = (item.get("title") or "").strip()
         description = (item.get("description") or "").strip()
