@@ -141,11 +141,11 @@ export function getExportUrl(search?: string, city?: string, category?: string, 
   return `${API_BASE}/export?${params.toString()}`;
 }
 
-export async function lookupCompany(name: string, refresh: boolean = false): Promise<any> {
+export async function lookupCompany(name: string, refresh: boolean = false, website_override?: string): Promise<any> {
   const res = await fetch(`${API_BASE}/lookup`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, refresh }),
+    body: JSON.stringify({ name, refresh, website_override: website_override || undefined }),
   });
   if (!res.ok) {
     const errorBody = await res.json().catch(() => ({}));
