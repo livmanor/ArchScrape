@@ -444,9 +444,18 @@ async def _lookup_company_impl(
             website_url = website_override
             result["organisation_name"] = {"value": name, "source": "input"}
             result["match_status"] = "matched"
+            notify("places", {
+                "organisation_name": result["organisation_name"],
+                "website": {"value": website_url, "source": "override"},
+                "match_status": "matched",
+            })
         else:
             logger.info("[Step 1] No name-matching place found for '%s'. Returning not_found.", name)
             result["match_status"] = "not_found"
+            notify("places", {
+                "organisation_name": {"value": "not found", "source": None},
+                "match_status": "not_found",
+            })
             notify("done", result)
             return result
     else:
@@ -456,6 +465,11 @@ async def _lookup_company_impl(
             result["match_status"] = "ambiguous"
             result["candidates"] = places.candidates
             result["organisation_name"] = places.organisation_name
+            notify("places", {
+                "organisation_name": places.organisation_name,
+                "match_status": "ambiguous",
+                "candidates": places.candidates,
+            })
             notify("done", result)
             return result
 

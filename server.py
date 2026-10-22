@@ -84,6 +84,7 @@ class AnalyzeRequest(BaseModel):
 class LookupRequest(BaseModel):
     name: str = Field(description="Company name to look up (e.g. 'design cafe')")
     refresh: bool = Field(default=False, description="Bypass cache and force fresh lookup")
+    website_override: Optional[str] = Field(default=None, description="Optional website URL override")
 
 
 class SaveLeadRequest(BaseModel):
@@ -428,7 +429,12 @@ async def lookup_company_endpoint(req: LookupRequest, request: Request):
 
     logger.info("[API Lookup] Starting lookup for '%s' from IP %s (refresh=%s).", name, client_ip, req.refresh)
     try:
-        result = await lookup_company(name=name, db_path=DB_PATH, refresh=req.refresh)
+        result = await lookup_company(
+            name=name,
+            db_path=DB_PATH,
+            refresh=req.refresh,
+            website_override=req.website_override,
+        )
         return result
     except QuotaExceededError as qe:
         raise HTTPException(status_code=429, detail=qe.message)
@@ -441,6 +447,7 @@ async def lookup_company_endpoint(req: LookupRequest, request: Request):
 async def stream_lookup_endpoint(
     name: str = Query(..., description="Company name to look up"),
     refresh: bool = Query(False, description="Bypass cache"),
+    website_override: Optional[str] = Query(None, description="Optional website URL override"),
     request: Request = None,
 ):
     """
@@ -472,6 +479,7 @@ async def stream_lookup_endpoint(
                 name=clean_name,
                 db_path=DB_PATH,
                 refresh=refresh,
+                website_override=website_override.strip() if website_override else None,
                 progress_callback=callback,
             )
         )

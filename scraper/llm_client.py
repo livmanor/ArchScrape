@@ -23,7 +23,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
-DEFAULT_MODEL = "google/gemini-2.0-flash-001"
+DEFAULT_MODEL = "google/gemini-2.5-flash"
 MAX_PAGE_TEXT_CHARS = 30000
 
 SYSTEM_PROMPT = (
@@ -192,6 +192,7 @@ async def _call_openrouter(
     payload = {
         "model": model,
         "temperature": 0,
+        "max_tokens": 1500,
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
             {
@@ -280,6 +281,8 @@ async def extract_fields(page_text: str, source_url: str = "") -> dict[str, Any]
         return empty_template
 
     model = os.getenv("OPENROUTER_MODEL", "").strip() or DEFAULT_MODEL
+    if "gemini-2.0-flash" in model:
+        model = "google/gemini-2.5-flash"
     fallback_model = os.getenv("OPENROUTER_FALLBACK_MODEL", "").strip()
 
     cleaned_text = _clean_and_truncate_text(page_text, MAX_PAGE_TEXT_CHARS)
