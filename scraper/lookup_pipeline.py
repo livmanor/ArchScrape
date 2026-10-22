@@ -72,10 +72,12 @@ _SOCIAL_DOMAINS = {
 # Sub-page keywords that suggest contact / about / team content
 _RELEVANT_PAGE_KEYWORDS = {"contact", "about", "team", "people", "leadership"}
 
-# Designation tokens that indicate an executive / CEO role
+# Designation tokens that indicate an executive / founder role
 _CEO_TITLE_RE = re.compile(
     r"\b(CEO|Chief Executive Officer|Founder|Co-Founder|Managing Director|MD|"
-    r"Director|Principal|Partner|President|Head)\b",
+    r"Director|Principal|Partner|President|Head|Architect|Business Coach|"
+    r"Creative Director|Design Director|Studio Head|Lead Architect|Principal Architect|"
+    r"Creative Lead|Studio Director|Brand Strategist)\b",
     re.IGNORECASE,
 )
 
@@ -328,15 +330,17 @@ def _extract_ceo(text: str) -> tuple[str, str]:
     if not text:
         return "not found", "not found"
 
-    # Pattern: "Name, <CEO Title>" or "<CEO Title>: Name" or "Name — <CEO Title>"
-    # We look for a title token adjacent to a properly-cased name.
+    TITLE_ALT = (
+        r"CEO|Chief Executive Officer|Founder|Co-Founder|Managing Director|MD|"
+        r"Director|Principal|Partner|President|Head|Architect|Business Coach|"
+        r"Creative Director|Design Director|Studio Head|Lead Architect|Principal Architect|"
+        r"Creative Lead|Studio Director|Brand Strategist"
+    )
 
     # Pattern A: Title followed by colon/dash and then Name
     pat_a = re.search(
-        r"(?P<title>"
-        r"CEO|Chief Executive Officer|Founder|Co-Founder|Managing Director|MD|"
-        r"Director|Principal|Partner|President|Head"
-        r")\s*[:\-\u2013\u2014]\s*"
+        rf"(?P<title>{TITLE_ALT})\s*[:\-\u2013\u2014]\s*"
+        r"(?:(?:Ar\.?|Mr\.?|Ms\.?|Mrs\.?|Dr\.?)\s+)?"
         r"(?P<name>[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})",
         text,
         re.IGNORECASE,
@@ -346,15 +350,13 @@ def _extract_ceo(text: str) -> tuple[str, str]:
         title = pat_a.group("title").strip()
         return name, title
 
-    # Pattern B: Name followed by comma/dash and then Title
+    # Pattern B: Name followed by comma/dash/newline and then Title
     pat_b = re.search(
         r"(?P<name>[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})"
-        r"\s*[,\-\u2013\u2014]\s*"
-        r"(?P<title>"
-        r"CEO|Chief Executive Officer|Founder|Co-Founder|Managing Director|MD|"
-        r"Director|Principal|Partner|President|Head"
-        r")\b",
+        r"\s*[,\-\u2013\u2014\n]\s*"
+        rf"(?P<title>{TITLE_ALT})\b",
         text,
+        re.IGNORECASE,
     )
     if pat_b:
         name = pat_b.group("name").strip()
@@ -363,7 +365,8 @@ def _extract_ceo(text: str) -> tuple[str, str]:
 
     # Pattern C: founded/led by Name
     pat_c = re.search(
-        r"(?:founded|co-founded|led|headed|established)\s+(?:in\s+\d{4}\s+)?by\s+"
+        r"(?:founded|co-founded|led|headed|established|started|spearheaded)\s+(?:in\s+\d{4}\s+)?by\s+"
+        r"(?:(?:Ar\.?|Mr\.?|Ms\.?|Mrs\.?|Dr\.?)\s+)?"
         r"(?P<name>[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})",
         text,
         re.IGNORECASE,
@@ -371,6 +374,50 @@ def _extract_ceo(text: str) -> tuple[str, str]:
     if pat_c:
         name = pat_c.group("name").strip()
         return name, "Founder"
+
+    # Pattern D: first-person "I'm Name" / "I am Name" on an about/bio page
+    pat_d = re.search(
+        r"(?:I'?m|I am|My name is)\s+"
+        r"(?:(?:Ar\.?|Mr\.?|Ms\.?|Mrs\.?|Dr\.?)\s+)?"
+        r"(?P<name>[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3})"
+        r"(?:\s*,\s*(?P<title>[A-Za-z &'-]+?))?"
+        r"(?:\.|,|\n|$)",
+        text,
+        re.IGNORECASE,
+    )
+    if pat_d:
+        name = pat_d.group("name").strip()
+        raw_title = (pat_d.group("title") or "").strip()
+        # Only accept if name looks like a real person name (>= 2 words OR single word >= 4 chars)
+        words = name.split()
+        if (len(words) >= 2 or (len(words) == 1 and len(name) >= 4)) and len(name) <= 40:
+            # Clean out any trailing company/junk words
+            if not any(junk in name.lower() for junk in ["india", "design", "studio", "architect", "interior", "firm"]):
+                title = raw_title if raw_title and len(raw_title) < 60 else "Principal"
+                return name, title
+
+    # Pattern E: "Name is the Founder/CEO" or "Name serves as"
+    pat_e = re.search(
+        r"(?P<name>[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})"
+        r"\s+(?:is|serves as|works as)\s+(?:the\s+|an?\s+)?"
+        rf"(?P<title>{TITLE_ALT})\b",
+        text,
+        re.IGNORECASE,
+    )
+    if pat_e:
+        name = pat_e.group("name").strip()
+        title = pat_e.group("title").strip()
+        return name, title
+
+    # Pattern F: JSON-LD / schema.org Person name in text like ""name":"Shanker De""
+    pat_f = re.search(
+        r'"name"\s*:\s*"(?P<name>[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})"',
+        text,
+    )
+    if pat_f:
+        name = pat_f.group("name").strip()
+        if len(name.split()) >= 2:
+            return name, "Principal"
 
     return "not found", "not found"
 
@@ -562,21 +609,24 @@ def lookup_company(name: str, db_path=None) -> dict:
     else:
         log("[Step 5] No social links found.")
 
-    # ── STEP 6: CEO / designation — only from about/team pages ──────────────
-    log("[Step 6] Extracting CEO/designation from about/team pages.")
+    # ── STEP 6: CEO / designation — from about/team pages + homepage ─────────
+    log("[Step 6] Extracting CEO/designation from about/team pages (and homepage fallback).")
     ceo_name = "not found"
     ceo_desig = "not found"
     ceo_source = None
 
-    for page_url in relevant_pages:  # only sub-pages, not homepage
+    # Broaden: also search homepage if no about/team page has the info
+    about_pages = [
+        url for url in relevant_pages
+        if any(kw in urlparse(url).path.lower() for kw in ("about", "team", "people", "leadership", "who-we-are", "our-story", "us"))
+    ]
+    fallback_pages = list(scraped_pages.keys())  # includes homepage
+
+    for page_url in (about_pages or fallback_pages):
         page_data = scraped_pages.get(page_url)
         if not page_data:
             continue
         page_md = page_data.get("markdown") or ""
-        path_lower = urlparse(page_url).path.lower()
-        if not any(kw in path_lower for kw in ("about", "team", "people", "leadership")):
-            continue
-
         extracted_name, extracted_desig = _extract_ceo(page_md)
         if extracted_name != "not found":
             ceo_name = extracted_name

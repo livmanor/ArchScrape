@@ -398,6 +398,13 @@ def extract_owner_and_designation(text: str) -> tuple[str, str]:
     if not text:
         return "Not found", "Not found"
 
+    TITLE_ALT = (
+        r"Founder(?:\s*(?:and|&)\s*(?:Principal Architect|CEO|Managing Director|Partner))?|"
+        r"Co-Founder|Principal Architect|Managing Director|Creative Director|Design Director|"
+        r"Studio Head|Lead Architect|Partner|Principal|CEO|Chief Executive Officer|Director|"
+        r"President|Business Coach|Creative Lead|Studio Director|Brand Strategist|Head"
+    )
+
     # Pattern 1: Founded/established by Name [& Name]
     pat1 = re.search(
         r'(?:founded|co-founded|established|started|headed|led|spearheaded)\s+'
@@ -420,7 +427,7 @@ def extract_owner_and_designation(text: str) -> tuple[str, str]:
 
     # Pattern 2: Designation: Name
     pat2 = re.search(
-        r'\b(Founder(?:\s*(?:and|&)\s*(?:Principal Architect|CEO|Managing Director|Partner))?|Co-Founder|Principal Architect|Managing Director|Creative Director|Design Director|Studio Head|Lead Architect|Partner|Principal)\s*[:\-\–]\s*'
+        rf'\b({TITLE_ALT})\s*[:\-\u2013\u2014]\s*'
         r'(?:(?:Ar\.?|Architect|Mr\.?|Ms\.?|Mrs\.?|Dr\.?)\s+)?'
         r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})',
         text,
@@ -433,10 +440,10 @@ def extract_owner_and_designation(text: str) -> tuple[str, str]:
         if clean:
             return clean, desig.title()
 
-    # Pattern 3: Name, Designation
+    # Pattern 3: Name, Designation or Name — Designation
     pat3 = re.search(
-        r'(?:(?:Ar\.?|Architect)\s+)?([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\s*(?:,\s*|\s+[\-\–]\s+)'
-        r'(?:is\s+(?:the\s+)?)?(Founder(?:\s*(?:and|&)\s*(?:Principal Architect|CEO|Managing Director|Partner))?|Co-Founder|Principal Architect|Managing Director|Creative Director|Design Director|Studio Head|Partner|Principal)',
+        r'(?:(?:Ar\.?|Architect)\s+)?([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\s*(?:,\s*|\s+[\-\u2013\u2014]\s+|\n)'
+        rf'(?:is\s+(?:the\s+))?({TITLE_ALT})',
         text,
         re.I,
     )
@@ -461,13 +468,49 @@ def extract_owner_and_designation(text: str) -> tuple[str, str]:
     # Pattern 5: Markdown heading with name followed by designation
     pat5 = re.search(
         r'(?:^|\n)#{1,4}\s+(?:(?:Ar\.?|Architect)\s+)?([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\s*\n+\s*'
-        r'(Founder(?:\s*(?:and|&)\s*(?:Principal Architect|CEO|Managing Director|Partner))?|Co-Founder|Principal Architect|Managing Director|Creative Director|Design Director|Studio Head|Partner|Principal)',
+        rf'({TITLE_ALT})',
         text,
         re.I,
     )
     if pat5:
         raw_name = pat5.group(1).strip()
         desig = pat5.group(2).strip()
+        clean = _clean_single_name(raw_name)
+        if clean:
+            return clean, desig.title()
+
+    # Pattern 6: first-person "I'm Name" / "I am Name" bio pattern
+    pat6 = re.search(
+        r"(?:I'?m|I am|My name is)\s+"
+        r'(?:(?:Ar\.?|Mr\.?|Ms\.?|Mrs\.?|Dr\.?)\s+)?'
+        r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3})'
+        r'(?:\s*,\s*([A-Za-z &\'-]+?))?'
+        r'(?:\.|,|\n|$)',
+        text,
+        re.I,
+    )
+    if pat6:
+        raw_name = pat6.group(1).strip()
+        raw_title = (pat6.group(2) or "").strip()
+        words = raw_name.split()
+        if (len(words) >= 2 or (len(words) == 1 and len(raw_name) >= 4)) and len(raw_name) <= 40:
+            if not any(junk in raw_name.lower() for junk in ["india", "design", "studio", "architect", "interior", "firm"]):
+                clean = _clean_single_name(raw_name)
+                if clean:
+                    title = raw_title if raw_title and len(raw_title) < 60 else "Principal"
+                    return clean, title
+
+    # Pattern 7: "Name is/serves as the CEO/Founder"
+    pat7 = re.search(
+        r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})'
+        r'\s+(?:is|serves as|works as)\s+(?:the\s+|an?\s+)?'
+        rf'({TITLE_ALT})\b',
+        text,
+        re.I,
+    )
+    if pat7:
+        raw_name = pat7.group(1).strip()
+        desig = pat7.group(2).strip()
         clean = _clean_single_name(raw_name)
         if clean:
             return clean, desig.title()
