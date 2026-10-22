@@ -42,6 +42,8 @@ export const App: React.FC = () => {
   const [selectedLead, setSelectedLead] = useState<CompanyLead | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [analyzingCompanyId, setAnalyzingCompanyId] = useState<string | null>(null);
+  const [analysisElapsed, setAnalysisElapsed] = useState(0);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
 
   // Directory screen states
@@ -128,21 +130,32 @@ export const App: React.FC = () => {
 
   // Screen B -> Screen C: Deep Crawl & Inspect Company
   const handleInspectCompany = async (company: SearchHit) => {
+    const companyId = company.url || company.domain || company.name;
     try {
       setIsAnalyzing(true);
+      setAnalyzingCompanyId(companyId);
       setAnalysisError(null);
+      setAnalysisElapsed(0);
+
+      // Start elapsed-time ticker
+      const startTime = Date.now();
+      const ticker = setInterval(() => {
+        setAnalysisElapsed(Math.floor((Date.now() - startTime) / 1000));
+      }, 1000);
 
       // Target can be URL or domain or name
-      const target = company.url || company.domain || company.name;
+      const target = companyId;
       const category = company.category || 'architecture';
 
       const lead = await analyzeCompany(target, category, true);
+      clearInterval(ticker);
       setSelectedLead(lead);
       setIsModalOpen(true);
     } catch (err: any) {
       setAnalysisError(`Crawling error for ${company.name}: ${err.message}`);
     } finally {
       setIsAnalyzing(false);
+      setAnalyzingCompanyId(null);
     }
   };
 
