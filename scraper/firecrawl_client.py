@@ -754,26 +754,25 @@ def _get_sdk():
 # ─── Key Resolution ──────────────────────────────────────────────────────────
 
 def _resolve_api_key() -> Optional[str]:
-    """Return configured API key from session state, input widgets, or environment."""
-    try:
-        import streamlit as st
-        # 1. Explicitly applied key
-        k = (st.session_state.get("firecrawl_api_key") or "").strip()
-        if k:
-            return k
-        # 2. Key typed in search page input
-        k = (st.session_state.get("fc_page_key_input") or "").strip()
-        if k:
-            return k
-        # 3. Key typed in sidebar widget
-        k = (st.session_state.get("_fc_key_input") or "").strip()
-        if k:
-            return k
-    except Exception:
-        pass
-
+    """Return configured API key from environment variable."""
     env_key = (os.environ.get("FIRECRAWL_API_KEY") or "").strip()
-    return env_key or None
+    if env_key:
+        return env_key
+
+    # Check Streamlit only if running under an active Streamlit runtime
+    import sys
+    if "streamlit" in sys.modules:
+        try:
+            import streamlit as st
+            if hasattr(st, "runtime") and st.runtime.exists():
+                for k_name in ("firecrawl_api_key", "fc_page_key_input", "_fc_key_input"):
+                    k = (st.session_state.get(k_name) or "").strip()
+                    if k:
+                        return k
+        except Exception:
+            pass
+
+    return None
 
 
 def is_available() -> bool:

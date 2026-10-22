@@ -37,6 +37,7 @@ _PLACES_SEARCH_URL = "https://places.googleapis.com/v1/places:searchText"
 # Fields we request from the Places API (New) field mask.
 # addressComponents -> city; nationalPhoneNumber -> mobile; websiteUri -> website.
 _FIELD_MASK = (
+    "places.id,"
     "places.displayName,"
     "places.formattedAddress,"
     "places.addressComponents,"
@@ -54,6 +55,10 @@ class PlacesResult:
     city: dict = field(default_factory=lambda: {"value": "not found", "source": None})
     mobile: dict = field(default_factory=lambda: {"value": "not found", "source": None})
     website: dict = field(default_factory=lambda: {"value": "not found", "source": None})
+    place_id: Optional[str] = None
+    formatted_address: Optional[str] = None
+    ambiguous: bool = False
+    candidates: list[dict] = field(default_factory=list)
     # Raw place data for downstream consumers
     raw_place: dict = field(default_factory=dict)
 
@@ -166,49 +171,65 @@ def places_text_search(name: str) -> Optional[PlacesResult]:
         logger.info("[Places] No results for '%s'.", name)
         return None
 
-    # Check every returned place for name match; use the first matching one.
-    matching_place = None
+    # Check every returned place for name match
+    matching_places = []
     for place in places:
         display_name_obj = place.get("displayName") or {}
         display_name = (display_name_obj.get("text") or "").strip()
         if display_name and _all_words_match(name, display_name):
-            matching_place = place
+            matching_places.append(place)
             logger.info("[Places] Name match: searched='%s' place='%s'.", name, display_name)
-            break
         else:
             logger.info(
                 "[Places] Name mismatch: searched='%s' place='%s'. Skipping.",
                 name, display_name,
             )
 
-    if matching_place is None:
+    if not matching_places:
         logger.info("[Places] No name-matching place found for '%s'.", name)
         return None
 
-    # Extract fields from the matching place
-    result = PlacesResult(raw_place=matching_place)
+    # If multiple plausible branches exist, flag ambiguity
+    is_ambiguous = len(matching_places) > 1
+    candidates = [
+        {
+            "name": (p.get("displayName") or {}).get("text", "").strip(),
+            "address": (p.get("formattedAddress") or "").strip(),
+            "place_id": (p.get("id") or "").strip(),
+        }
+        for p in matching_places
+    ]
+
+    primary_place = matching_places[0]
+    result = PlacesResult(
+        raw_place=primary_place,
+        place_id=(primary_place.get("id") or "").strip() or None,
+        formatted_address=(primary_place.get("formattedAddress") or "").strip() or None,
+        ambiguous=is_ambiguous,
+        candidates=candidates,
+    )
 
     # organisation_name
-    display_name_obj = matching_place.get("displayName") or {}
+    display_name_obj = primary_place.get("displayName") or {}
     org_name = (display_name_obj.get("text") or "").strip()
     if org_name:
         result.organisation_name = {"value": org_name, "source": "google_places"}
 
     # city (from addressComponents, never from query)
-    addr_components = matching_place.get("addressComponents") or []
+    addr_components = primary_place.get("addressComponents") or []
     city = _extract_city(addr_components)
     if city:
         result.city = {"value": city, "source": "google_places"}
 
     # mobile (nationalPhoneNumber preferred; fallback to international)
-    national = (matching_place.get("nationalPhoneNumber") or "").strip()
-    intl = (matching_place.get("internationalPhoneNumber") or "").strip()
+    national = (primary_place.get("nationalPhoneNumber") or "").strip()
+    intl = (primary_place.get("internationalPhoneNumber") or "").strip()
     phone = national or intl
     if phone:
         result.mobile = {"value": phone, "source": "google_places"}
 
     # website (websiteUri)
-    website = (matching_place.get("websiteUri") or "").strip()
+    website = (primary_place.get("websiteUri") or "").strip()
     if website:
         result.website = {"value": website, "source": "google_places"}
 
