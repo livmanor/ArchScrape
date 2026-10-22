@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   Building2,
   Sparkles,
@@ -14,18 +14,11 @@ import {
   Share2,
   Cpu,
   Layers,
-  Terminal,
   ExternalLink,
   ChevronRight,
   AlertTriangle,
 } from 'lucide-react';
 import { lookupCompany } from '../services/api';
-
-interface TerminalLog {
-  time: string;
-  type: 'cmd' | 'step' | 'info' | 'success' | 'warn' | 'error';
-  text: string;
-}
 
 interface LandingPageProps {
   onExploreFinder: () => void;
@@ -41,38 +34,12 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   const [lookupResult, setLookupResult] = useState<any | null>(null);
   const [lookupError, setLookupError] = useState<string | null>(null);
   const [activeStep, setActiveStep] = useState<number>(0);
-  const [terminalLogs, setTerminalLogs] = useState<TerminalLog[]>([
-    {
-      time: '00:00.00',
-      type: 'cmd',
-      text: '$ archguild-lookup-pipeline --ready',
-    },
-    {
-      time: '00:00.01',
-      type: 'info',
-      text: 'ArchGuild Intelligence Engine initialized. Ready for sequential discovery.',
-    },
-    {
-      time: '00:00.02',
-      type: 'step',
-      text: 'Select a quick test case or enter a practice name above to stream live verification.',
-    },
-  ]);
-  const terminalRef = useRef<HTMLDivElement>(null);
-
   const samplePresets = [
     { label: 'Archscale Guild', query: 'Archscale Guild', website: 'https://archscaleguild.com' },
     { label: 'Design Cafe', query: 'design cafe' },
     { label: 'Morphogenesis', query: 'morphogenesis' },
     { label: 'Studio Lotus', query: 'studio lotus' },
   ];
-
-  // Auto-scroll terminal log window
-  useEffect(() => {
-    if (terminalRef.current) {
-      terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
-    }
-  }, [terminalLogs]);
 
   const handleTestLookup = async (queryToRun?: string, websiteOverride?: string) => {
     const q = (queryToRun || lookupQuery).trim();
@@ -84,25 +51,6 @@ export const LandingPage: React.FC<LandingPageProps> = ({
     setLookupResult(null);
     setActiveStep(1);
 
-    const logs: TerminalLog[] = [];
-    const getTime = () => {
-      const d = new Date();
-      return (
-        d.toTimeString().split(' ')[0] +
-        '.' +
-        String(d.getMilliseconds()).padStart(3, '0').slice(0, 2)
-      );
-    };
-
-    const pushLog = (text: string, type: TerminalLog['type'] = 'info') => {
-      logs.push({ time: getTime(), type, text });
-      setTerminalLogs([...logs]);
-    };
-
-    pushLog(`$ archguild lookup --company "${q}" ${websiteOverride ? `--url "${websiteOverride}" ` : ''}--mode sse-stream`, 'cmd');
-    pushLog(`[PIPELINE START] Initializing multi-source verification pipeline...`, 'info');
-    pushLog(`[STEP 1/4] Google Places (New): Querying whole-word physical match...`, 'step');
-
     try {
       const streamUrl = `/api/lookup/stream?name=${encodeURIComponent(q)}&refresh=true${websiteOverride ? `&website_override=${encodeURIComponent(websiteOverride)}` : ''}`;
       const eventSource = new EventSource(streamUrl);
@@ -110,50 +58,18 @@ export const LandingPage: React.FC<LandingPageProps> = ({
       eventSource.addEventListener('places', (e) => {
         try {
           const data = JSON.parse(e.data);
-          if (data.match_status === 'matched') {
-            pushLog(`[Places API] ✓ Entity Verified: "${data.organisation_name?.value}" (City: ${data.city?.value || 'N/A'})`, 'success');
-            if (data.website?.value && data.website.value !== 'not found') {
-              pushLog(`[Places API] Official Domain Resolved: ${data.website.value}`, 'info');
-              pushLog(`[STEP 2/4] Firecrawl Engine: Mapping internal subpages (/about, /team, /leadership, /guild)...`, 'step');
-              setActiveStep(2);
-            } else {
-              pushLog(`[Places API] No official website listed in Places record.`, 'warn');
-            }
-          } else if (data.match_status === 'ambiguous') {
-            pushLog(`[Places API] ⚠ Ambiguous Result: Multiple branches found. Stopped silently to prevent guessing.`, 'warn');
-          } else {
-            pushLog(`[Places API] ✗ Whole-word check: no physical business found matching "${q}".`, 'warn');
+          if (data.match_status === 'matched' && data.website?.value && data.website.value !== 'not found') {
+            setActiveStep(2);
           }
         } catch {}
       });
 
-      eventSource.addEventListener('website', (e) => {
-        try {
-          const data = JSON.parse(e.data);
-          const pageCount = data.pages_scraped?.length || 1;
-          pushLog(`[Firecrawl] ✓ Parallel scraped ${pageCount} subpages (HTML + Markdown, waitFor: 4000ms).`, 'success');
-          if (data.email?.value && data.email.value !== 'not found') {
-            pushLog(`[Contacts] Extracted official email: ${data.email.value}`, 'info');
-          }
-          if (data.socials && Object.keys(data.socials).length > 0) {
-            pushLog(`[Socials] Verified ${Object.keys(data.socials).length} official channels (Directory aggregators blocked).`, 'info');
-          }
-          pushLog(`[STEP 3/4] OpenRouter Engine: Dispatching google/gemini-2.5-flash (Strict JSON schema, temp: 0)...`, 'step');
-          setActiveStep(3);
-        } catch {}
+      eventSource.addEventListener('website', () => {
+        setActiveStep(3);
       });
 
-      eventSource.addEventListener('intelligence', (e) => {
-        try {
-          const data = JSON.parse(e.data);
-          const peopleCount = data.people?.length || 0;
-          pushLog(`[OpenRouter AI] ✓ Extracted ${peopleCount} individuals from 30,000 char sanitized text.`, 'success');
-          pushLog(`[STEP 4/4] Verbatim Guard: Separately checking names and titles against raw text...`, 'step');
-          if (data.ceo?.name?.value && data.ceo.name.value !== 'not found') {
-            pushLog(`[Verbatim Guard] ✓ Verified Executive: "${data.ceo.name.value}" — ${data.ceo.designation.value}`, 'success');
-          }
-          setActiveStep(4);
-        } catch {}
+      eventSource.addEventListener('intelligence', () => {
+        setActiveStep(4);
       });
 
       eventSource.addEventListener('done', (e) => {
@@ -161,8 +77,6 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           const data = JSON.parse(e.data);
           setLookupResult(data);
           setActiveStep(4);
-          pushLog(`[PERSISTENCE] Record cached in SQLite database with source attribution.`, 'info');
-          pushLog(`[PIPELINE COMPLETE] ✓ Verification complete with 0 hallucinations.`, 'success');
         } catch {}
         eventSource.close();
         setIsLookingUp(false);
@@ -170,22 +84,18 @@ export const LandingPage: React.FC<LandingPageProps> = ({
 
       eventSource.addEventListener('error', () => {
         eventSource.close();
-        // Fallback to direct HTTP lookup if SSE encounters a transport glitch
         lookupCompany(q, true, websiteOverride)
           .then((res) => {
             setLookupResult(res);
             setActiveStep(4);
-            pushLog(`[COMPLETED] Direct lookup finished. Match Status: ${res.match_status}`, 'info');
             setIsLookingUp(false);
           })
           .catch((err) => {
-            pushLog(`[ERROR] ${err.message}`, 'error');
             setLookupError(err.message);
             setIsLookingUp(false);
           });
       });
     } catch (err: any) {
-      pushLog(`[ERROR] Failed to start stream: ${err.message}`, 'error');
       setLookupError(err.message);
       setIsLookingUp(false);
     }
@@ -234,18 +144,16 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           {/* ─── Interactive Live Lookup Terminal Card ──────────────────── */}
           <div className="max-w-4xl mx-auto">
             <div className="rounded-2xl border border-slate-200 bg-white shadow-xl p-6 sm:p-8">
-              {/* Window Header */}
+              {/* Card Header */}
               <div className="flex items-center justify-between border-b border-slate-100 pb-4 mb-6">
                 <div className="flex items-center gap-2.5">
-                  <div className="flex gap-1.5">
-                    <div className="w-3 h-3 rounded-full bg-rose-400" />
-                    <div className="w-3 h-3 rounded-full bg-amber-400" />
-                    <div className="w-3 h-3 rounded-full bg-emerald-400" />
+                  <div className="w-8 h-8 rounded-lg bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600">
+                    <Search className="h-4 w-4" />
                   </div>
-                  <span className="text-xs font-mono text-slate-500 ml-2 flex items-center gap-1.5">
-                    <Terminal className="h-3.5 w-3.5 text-indigo-600" />
-                    archguild-lookup-pipeline :: live runner
-                  </span>
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900">Live Practice Intelligence Engine</h3>
+                    <p className="text-[11px] text-slate-500">Real-time Places & OpenRouter verification</p>
+                  </div>
                 </div>
                 <span className="text-[11px] font-semibold tracking-wider text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-md">
                   Active Endpoint: /api/lookup
@@ -331,49 +239,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                 ))}
               </div>
 
-              {/* Sequential Terminal Log Stream Box */}
-              {terminalLogs.length > 0 && (
-                <div className="mb-6 rounded-xl bg-[#090d16] border border-slate-800 p-4 font-mono text-[11px] leading-relaxed shadow-inner overflow-hidden text-left">
-                  <div className="flex items-center justify-between text-slate-500 text-[10px] pb-2.5 mb-2.5 border-b border-slate-800/80">
-                    <div className="flex items-center gap-2">
-                      <span className={`w-2 h-2 rounded-full ${isLookingUp ? 'bg-emerald-400 animate-pulse' : 'bg-slate-600'}`} />
-                      <span className="font-semibold text-slate-300">LIVE TERMINAL LOG STREAM</span>
-                    </div>
-                    <span className="text-slate-600 font-mono">SSE protocol :: /api/lookup/stream</span>
-                  </div>
 
-                  <div ref={terminalRef} className="h-44 overflow-y-auto space-y-1.5 scroll-smooth pr-1">
-                    {terminalLogs.map((log, idx) => (
-                      <div key={idx} className="flex items-start gap-2">
-                        <span className="text-slate-600 select-none text-[10px] pt-0.5">{log.time}</span>
-                        <span
-                          className={
-                            log.type === 'cmd'
-                              ? 'text-sky-400 font-semibold'
-                              : log.type === 'step'
-                              ? 'text-indigo-300 font-bold'
-                              : log.type === 'success'
-                              ? 'text-emerald-400 font-medium'
-                              : log.type === 'warn'
-                              ? 'text-amber-300 font-medium'
-                              : log.type === 'error'
-                              ? 'text-rose-400 font-semibold'
-                              : 'text-slate-300'
-                          }
-                        >
-                          {log.text}
-                        </span>
-                      </div>
-                    ))}
-                    {isLookingUp && (
-                      <div className="flex items-center gap-2 text-indigo-400 pt-1">
-                        <span className="inline-block w-2 h-3.5 bg-indigo-400 animate-pulse" />
-                        <span className="text-slate-500 text-[10px]">Processing pipeline events...</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
 
               {/* Lookup Result Box */}
               {lookupResult && (
