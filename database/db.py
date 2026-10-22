@@ -54,9 +54,9 @@ def migrate_db(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-def init_db(db_path: pathlib.Path | None = None) -> pathlib.Path:
+def init_db(db_path: pathlib.Path | str | None = None) -> pathlib.Path:
     """Create the database file and apply the schema if not already applied."""
-    path = db_path or _DB_PATH
+    path = pathlib.Path(db_path) if db_path else _DB_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
 
     schema_sql = _SCHEMA_PATH.read_text(encoding="utf-8")
@@ -71,8 +71,9 @@ def init_db(db_path: pathlib.Path | None = None) -> pathlib.Path:
 
 
 @contextmanager
-def get_connection(db_path: pathlib.Path | None = None) -> Generator[sqlite3.Connection, None, None]:
+def get_connection(db_path: pathlib.Path | str | None = None) -> Generator[sqlite3.Connection, None, None]:
     """Yield a connection with row_factory set and foreign keys enabled."""
+    path = pathlib.Path(db_path) if db_path else _DB_PATH
     path = db_path or _DB_PATH
     conn = sqlite3.connect(str(path), timeout=10)
     conn.row_factory = sqlite3.Row
