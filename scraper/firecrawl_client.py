@@ -866,8 +866,8 @@ def firecrawl_fetch(url: str) -> dict:
             url,
             params={
                 "formats": ["markdown", "html"],
-                "onlyMainContent": True,
-                "waitFor": 2000,
+                "onlyMainContent": False,
+                "waitFor": 3000,
             },
         )
 
@@ -877,6 +877,7 @@ def firecrawl_fetch(url: str) -> dict:
                 "url": url,
                 "html": None,
                 "markdown": None,
+                "metadata": {},
                 "error": f"Unexpected response type from Firecrawl: {type(data)}",
             }
 
@@ -898,6 +899,7 @@ def firecrawl_fetch(url: str) -> dict:
             "url": final_url,
             "html": html,
             "markdown": markdown,
+            "metadata": metadata,
             "structured": structured,
             "error": None if ok else "Firecrawl returned empty content for this page.",
         }

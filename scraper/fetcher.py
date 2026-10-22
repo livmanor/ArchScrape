@@ -183,10 +183,11 @@ def _firecrawl_fetch_result(url: str) -> Optional["FetchResult"]:
         fc = firecrawl_fetch(url)
         if fc["ok"]:
             html = fc["html"] or ""
-            # Prefer rich HTML; fall back to markdown wrapped in <body> so
-            # downstream BeautifulSoup parsers still work
-            if not html and fc["markdown"]:
-                html = f"<html><body>{fc['markdown']}</body></html>"
+            meta_title = fc.get("metadata", {}).get("title") or fc.get("metadata", {}).get("ogTitle") or ""
+            if meta_title and "<title" not in html.lower():
+                html = f"<head><title>{meta_title}</title></head>" + html
+            elif not html and fc.get("markdown"):
+                html = f"<html><head><title>{meta_title}</title></head><body>{fc['markdown']}</body></html>"
             return FetchResult(
                 url=fc["url"],
                 original_url=url,
