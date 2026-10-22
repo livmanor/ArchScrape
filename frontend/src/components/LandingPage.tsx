@@ -41,11 +41,27 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   const [lookupResult, setLookupResult] = useState<any | null>(null);
   const [lookupError, setLookupError] = useState<string | null>(null);
   const [activeStep, setActiveStep] = useState<number>(0);
-  const [terminalLogs, setTerminalLogs] = useState<TerminalLog[]>([]);
+  const [terminalLogs, setTerminalLogs] = useState<TerminalLog[]>([
+    {
+      time: '00:00.00',
+      type: 'cmd',
+      text: '$ archguild-lookup-pipeline --ready',
+    },
+    {
+      time: '00:00.01',
+      type: 'info',
+      text: 'ArchGuild Intelligence Engine initialized. Ready for sequential discovery.',
+    },
+    {
+      time: '00:00.02',
+      type: 'step',
+      text: 'Select a quick test case or enter a practice name above to stream live verification.',
+    },
+  ]);
   const terminalRef = useRef<HTMLDivElement>(null);
 
   const samplePresets = [
-    { label: 'Archscale Guild', query: 'Archscale Guild' },
+    { label: 'Archscale Guild', query: 'Archscale Guild', website: 'https://archscaleguild.com' },
     { label: 'Design Cafe', query: 'design cafe' },
     { label: 'Morphogenesis', query: 'morphogenesis' },
     { label: 'Studio Lotus', query: 'studio lotus' },
@@ -58,7 +74,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
     }
   }, [terminalLogs]);
 
-  const handleTestLookup = async (queryToRun?: string) => {
+  const handleTestLookup = async (queryToRun?: string, websiteOverride?: string) => {
     const q = (queryToRun || lookupQuery).trim();
     if (!q) return;
 
@@ -83,12 +99,13 @@ export const LandingPage: React.FC<LandingPageProps> = ({
       setTerminalLogs([...logs]);
     };
 
-    pushLog(`$ archguild lookup --company "${q}" --mode sse-stream --refresh`, 'cmd');
+    pushLog(`$ archguild lookup --company "${q}" ${websiteOverride ? `--url "${websiteOverride}" ` : ''}--mode sse-stream`, 'cmd');
     pushLog(`[PIPELINE START] Initializing multi-source verification pipeline...`, 'info');
     pushLog(`[STEP 1/4] Google Places (New): Querying whole-word physical match...`, 'step');
 
     try {
-      const eventSource = new EventSource(`/api/lookup/stream?name=${encodeURIComponent(q)}&refresh=true`);
+      const streamUrl = `/api/lookup/stream?name=${encodeURIComponent(q)}&refresh=true${websiteOverride ? `&website_override=${encodeURIComponent(websiteOverride)}` : ''}`;
+      const eventSource = new EventSource(streamUrl);
 
       eventSource.addEventListener('places', (e) => {
         try {
@@ -121,7 +138,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           if (data.socials && Object.keys(data.socials).length > 0) {
             pushLog(`[Socials] Verified ${Object.keys(data.socials).length} official channels (Directory aggregators blocked).`, 'info');
           }
-          pushLog(`[STEP 3/4] OpenRouter Engine: Dispatching google/gemini-2.0-flash-001 (Strict JSON schema, temp: 0)...`, 'step');
+          pushLog(`[STEP 3/4] OpenRouter Engine: Dispatching google/gemini-2.5-flash (Strict JSON schema, temp: 0)...`, 'step');
           setActiveStep(3);
         } catch {}
       });
@@ -154,7 +171,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
       eventSource.addEventListener('error', () => {
         eventSource.close();
         // Fallback to direct HTTP lookup if SSE encounters a transport glitch
-        lookupCompany(q, true)
+        lookupCompany(q, true, websiteOverride)
           .then((res) => {
             setLookupResult(res);
             setActiveStep(4);
@@ -273,7 +290,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                 {samplePresets.map((preset, idx) => (
                   <button
                     key={idx}
-                    onClick={() => handleTestLookup(preset.query)}
+                    onClick={() => handleTestLookup(preset.query, (preset as any).website)}
                     className="text-xs px-2.5 py-1 rounded-lg border border-slate-200 hover:border-indigo-300 bg-slate-50 hover:bg-indigo-50/50 text-slate-600 hover:text-indigo-700 transition cursor-pointer"
                   >
                     {preset.label}
