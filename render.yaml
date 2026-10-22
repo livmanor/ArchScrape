@@ -22,7 +22,4 @@ services:
         value: meta-llama/llama-3.3-70b-instruct
       - key: CORS_ORIGINS
         sync: false
-    disk:
-      name: archscale-data
-      mountPath: /app/data
-      sizeGB: 1
+
