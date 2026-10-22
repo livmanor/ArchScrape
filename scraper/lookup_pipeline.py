@@ -339,6 +339,7 @@ async def lookup_company(
     name: str,
     db_path: Optional[str | Any] = None,
     refresh: bool = False,
+    website_override: Optional[str] = None,
     progress_callback: Optional[Callable[[str, Any], None]] = None,
 ) -> dict[str, Any]:
     """
@@ -373,14 +374,14 @@ async def lookup_company(
 
     # ── 1. Cache Check ───────────────────────────────────────────────────────
     cached = get_cached_lookup(clean_name, db_path=str(db_path) if db_path else None, refresh=refresh)
-    if cached:
+    if cached and not website_override:
         logger.info("[Lookup] Returning cached result for '%s'", clean_name)
         notify("done", cached)
         return cached
 
     # Deduplicate in-flight concurrent requests for the exact same query
     async def _run() -> dict[str, Any]:
-        return await _lookup_company_impl(clean_name, db_path, notify, sources_called, start_time)
+        return await _lookup_company_impl(clean_name, db_path, notify, sources_called, start_time, website_override=website_override)
 
     result = await execute_deduplicated_lookup(clean_name, _run)
 
@@ -406,6 +407,7 @@ async def _lookup_company_impl(
     notify: Callable[[str, Any], None],
     sources_called: list[str],
     start_time: float,
+    website_override: Optional[str] = None,
 ) -> dict[str, Any]:
     # Empty result template
     empty_ceo = {"name": {"value": "not found", "source": None}, "designation": {"value": "not found", "source": None}}
@@ -433,40 +435,46 @@ async def _lookup_company_impl(
     logger.info("[Step 1] Google Places completed in %.2fs (Found: %s)", time.time() - t0, bool(places))
 
     if places is None:
-        logger.info("[Step 1] No name-matching place found for '%s'. Returning not_found.", name)
-        result["match_status"] = "not_found"
-        notify("done", result)
-        return result
+        if website_override:
+            logger.info("[Step 1] Places did not find '%s', but website_override '%s' provided. Proceeding to website discovery.", name, website_override)
+            website_url = website_override
+            result["organisation_name"] = {"value": name, "source": "input"}
+            result["match_status"] = "matched"
+        else:
+            logger.info("[Step 1] No name-matching place found for '%s'. Returning not_found.", name)
+            result["match_status"] = "not_found"
+            notify("done", result)
+            return result
+    else:
+        # Ambiguity: multiple plausible branches
+        if places.ambiguous:
+            logger.info("[Step 1] Places returned %d plausible branches for '%s'. Flagging ambiguous.", len(places.candidates), name)
+            result["match_status"] = "ambiguous"
+            result["candidates"] = places.candidates
+            result["organisation_name"] = places.organisation_name
+            notify("done", result)
+            return result
 
-    # Ambiguity: multiple plausible branches
-    if places.ambiguous:
-        logger.info("[Step 1] Places returned %d plausible branches for '%s'. Flagging ambiguous.", len(places.candidates), name)
-        result["match_status"] = "ambiguous"
-        result["candidates"] = places.candidates
+        # Sourced from Places
+        result["raw_place_id"] = places.place_id
         result["organisation_name"] = places.organisation_name
-        notify("done", result)
-        return result
+        result["city"] = places.city  # from addressComponents only, never from query
+        result["mobile"] = places.mobile
+        result["match_status"] = "matched"
 
-    # Sourced from Places
-    result["raw_place_id"] = places.place_id
-    result["organisation_name"] = places.organisation_name
-    result["city"] = places.city  # from addressComponents only, never from query
-    result["mobile"] = places.mobile
-    result["match_status"] = "matched"
+        notify("places", {
+            "organisation_name": result["organisation_name"],
+            "city": result["city"],
+            "mobile": result["mobile"],
+            "website": places.website,
+            "match_status": result["match_status"],
+        })
 
-    notify("places", {
-        "organisation_name": result["organisation_name"],
-        "city": result["city"],
-        "mobile": result["mobile"],
-        "website": places.website,
-        "match_status": result["match_status"],
-    })
-
-    website_url = (places.website.get("value") or "").strip()
-    if not website_url or website_url == "not found":
-        logger.info("[Step 1] Places did not return a website URL. Lookup complete with Places data.")
-        notify("done", result)
-        return result
+        website_url = website_override or (places.website.get("value") or "").strip()
+        if not website_url or website_url == "not found":
+            logger.info("[Step 1] Places did not return a website URL. Lookup complete with Places data.")
+            notify("done", result)
+            return result
 
     # ── STEP 2: Discovery & Parallel Scraping ─────────────────────────────────
     async with httpx.AsyncClient() as http_client:

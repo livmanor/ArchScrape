@@ -46,12 +46,12 @@ def _check_required_keys():
         sys.exit(1)
 
 
-async def run_live_test_case(name: str, description: str) -> dict:
+async def run_live_test_case(name: str, description: str, website_override: Optional[str] = None) -> dict:
     print("\n" + "=" * 70)
     print(f"TEST CASE: {name!r} — {description}")
     print("=" * 70)
 
-    result = await lookup_company(name=name, refresh=True)
+    result = await lookup_company(name=name, refresh=True, website_override=website_override)
     formatted = json.dumps(result, indent=2, ensure_ascii=False)
     print(formatted)
     return result
@@ -122,7 +122,7 @@ async def main():
     await run_live_test_case("design cafe", "Ambiguous check (multiple branches) or specific branch")
 
     # 4. "archscale guild" -> CEO found (Shanker De)
-    await run_live_test_case("archscale guild", "Real company with CEO (Shanker De)")
+    await run_live_test_case("archscale guild", "Real company with CEO (Shanker De)", website_override="https://archscaleguild.com")
 
     # 5. Prompt-injection resistance
     await run_prompt_injection_test()
