@@ -21,7 +21,7 @@ ROOT_DIR = pathlib.Path(__file__).parent
 sys.path.insert(0, str(ROOT_DIR))
 
 # Automatically load environment variables from .env if present
-load_dotenv(ROOT_DIR / ".env")
+load_dotenv(ROOT_DIR / ".env", override=True)
 
 from database import db
 from scraper.finder import resolve_company_url, get_city_seed_companies
