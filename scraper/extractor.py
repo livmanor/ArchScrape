@@ -60,7 +60,8 @@ _DESIGNATION_RE = re.compile(
     r"Principal Architects?|Design Directors?|Creative Directors?|Directors?|"
     r"CEOs?|Chief Executive Officers?|Partners?|Principals?|Head of Design|"
     r"Lead Architects?|Senior Architects?|Architects?|"
-    r"Interior Designers?|Studio Heads?)\b",
+    r"Interior Designers?|Studio Heads?|Business Coach(?:es)?|Coaches?|Presidents?|"
+    r"Studio Directors?|Creative Leads?|Brand Strategists?)\b",
     re.IGNORECASE,
 )
 
@@ -305,8 +306,8 @@ def _extract_meta(soup: BeautifulSoup, source_url: str) -> list[Candidate]:
 _SENIORITY_RANKS: list[tuple[int, re.Pattern]] = [
     (1, re.compile(r"\b(founders?|co-founders?|founding partners?|owners?|proprietors?)\b", re.I)),
     (2, re.compile(r"\b(managing partners?|managing directors?|ceos?|chief executive officers?)\b", re.I)),
-    (3, re.compile(r"\b(principal architects?|principals?)\b", re.I)),
-    (4, re.compile(r"\b(directors?|partners?|design directors?|creative directors?|studio heads?)\b", re.I)),
+    (3, re.compile(r"\b(principal architects?|principals?|business coach(?:es)?|coaches?)\b", re.I)),
+    (4, re.compile(r"\b(directors?|partners?|design directors?|creative directors?|studio heads?|presidents?|creative leads?|studio directors?)\b", re.I)),
     (5, re.compile(r"\b(head of design|lead architects?|senior architects?|associate architects?|architects?|interior designers?)\b", re.I)),
 ]
 
@@ -411,7 +412,9 @@ def _clean_name(text: str) -> Optional[str]:
     if not text:
         return None
     clean = re.sub(r"\s+", " ", text).strip()
-    clean = re.sub(r"^(?:Ar\.|Architect|Mr\.|Ms\.|Mrs\.|Dr\.|Prof\.)\s+", "", clean, flags=re.I).strip()
+    clean = clean.rstrip(" .,-")
+    clean = re.sub(r"^(?:Ar\.?|Architect|Mr\.?|Ms\.?|Mrs\.?|Dr\.?|Prof\.?)\s+", "", clean, flags=re.I).strip()
+    clean = clean.rstrip(" .,-")
     if len(clean) < 3 or len(clean) > 40:
         return None
     if clean.lower() in _INVALID_NAME_WORDS:
@@ -419,13 +422,16 @@ def _clean_name(text: str) -> Optional[str]:
     parts = clean.split()
     if len(parts) < 2 or len(parts) > 5:
         return None
-    if not all(re.match(r"^[A-Za-z'.-]+$", p) for p in parts):
+    if not all(re.match(r"^[A-Za-z'-]+(?:\.)?$", p) for p in parts):
         return None
+    for p in parts:
+        if len(p) == 1 and not p.endswith("."):
+            return None
     # Reject if any token is a known material, vendor noun, or invalid word
-    tokens = {p.lower() for p in parts}
+    tokens = {p.lower().rstrip(".-") for p in parts}
     if tokens & _INVALID_NAME_WORDS:
         return None
-    return clean
+    return clean.title()
 
 
 def _is_junk_email(email: str) -> bool:
