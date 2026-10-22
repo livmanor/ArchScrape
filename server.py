@@ -9,11 +9,14 @@ import io
 import logging
 import os
 import pathlib
+import asyncio
+import json
 import sys
-from typing import Optional
+from typing import Any, Optional
 
-from fastapi import FastAPI, HTTPException, Query, Response
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
@@ -37,6 +40,7 @@ from services.company_service import (
     get_leads,
 )
 from scraper.lookup_pipeline import lookup_company
+from scraper.rate_limiter import check_ip_rate_limit, QuotaExceededError
 
 logger = logging.getLogger("archscale_api")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-8s %(name)s %(message)s")
@@ -49,10 +53,18 @@ app = FastAPI(
     version="2.0.0",
 )
 
-# Enable CORS for local React development
+# Restrict CORS to specified origins from environment or safe defaults
+raw_cors = os.getenv("CORS_ORIGINS", "").strip()
+allowed_origins = [o.strip() for o in raw_cors.split(",") if o.strip()] if raw_cors else [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -71,6 +83,7 @@ class AnalyzeRequest(BaseModel):
 
 class LookupRequest(BaseModel):
     name: str = Field(description="Company name to look up (e.g. 'design cafe')")
+    refresh: bool = Field(default=False, description="Bypass cache and force fresh lookup")
 
 
 class SaveLeadRequest(BaseModel):
@@ -309,37 +322,104 @@ def analyze_company(req: AnalyzeRequest):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+@app.get("/health")
+@app.get("/api/health")
+def health_endpoint():
+    """
+    Returns deployment readiness status and configured keys (booleans only).
+    Never exposes API key values.
+    """
+    return {
+        "status": "healthy",
+        "keys_configured": {
+            "google_places": bool((os.getenv("GOOGLE_PLACES_API_KEY") or "").strip()),
+            "firecrawl": bool((os.getenv("FIRECRAWL_API_KEY") or "").strip()),
+            "openrouter": bool((os.getenv("OPENROUTER_API_KEY") or "").strip()),
+        },
+    }
+
+
 @app.post("/api/lookup")
-def lookup_company_endpoint(req: LookupRequest):
+async def lookup_company_endpoint(req: LookupRequest, request: Request):
     """
-    Unified company lookup pipeline.
-
-    Steps:
-    1. Google Places API (New) text search — name-word match guard.
-       Returns not_found for all fields immediately if no result matches.
-    2. Firecrawl /v1/map to discover contact/about/team sub-pages.
-    3. Firecrawl /v1/scrape on homepage + matched sub-pages
-       (formats: markdown, links, json; waitFor 3000; onlyMainContent false).
-    4. Email: only mailto: links or literal addresses in page text.
-    5. Socials: only links to linkedin/facebook/instagram/x/youtube.
-    6. CEO/designation: only from about/team page text; exact title.
-    7. Verbatim verification on all scraped values.
-    8. Company size: hook for enrichment API (not found until configured).
-    9. Persists to SQLite with source attribution.
-
-    Returns every field as {value, source}.
+    Unified company lookup pipeline with rate limiting, in-flight deduplication, and SQLite caching.
     """
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    try:
+        await check_ip_rate_limit(client_ip)
+    except QuotaExceededError as qe:
+        raise HTTPException(status_code=429, detail=qe.message)
+
     name = req.name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="'name' must not be empty.")
 
-    logger.info("[API Lookup] Starting pipeline for '%s'.", name)
+    logger.info("[API Lookup] Starting lookup for '%s' from IP %s (refresh=%s).", name, client_ip, req.refresh)
     try:
-        result = lookup_company(name=name, db_path=DB_PATH)
+        result = await lookup_company(name=name, db_path=DB_PATH, refresh=req.refresh)
         return result
+    except QuotaExceededError as qe:
+        raise HTTPException(status_code=429, detail=qe.message)
     except Exception as exc:
         logger.exception("[API Lookup] Unhandled error for '%s'", name)
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/lookup/stream")
+async def stream_lookup_endpoint(
+    name: str = Query(..., description="Company name to look up"),
+    refresh: bool = Query(False, description="Bypass cache"),
+    request: Request = None,
+):
+    """
+    Streaming SSE endpoint emitting pipeline events as fields arrive:
+    event: places -> {organisation_name, city, mobile, website, match_status}
+    event: website -> {pages_scraped, email, socials}
+    event: intelligence -> {ceo, people, services, locations, company_size}
+    event: done -> full_result
+    """
+    client_ip = request.client.host if request and request.client else "127.0.0.1"
+    try:
+        await check_ip_rate_limit(client_ip)
+    except QuotaExceededError as qe:
+        raise HTTPException(status_code=429, detail=qe.message)
+
+    clean_name = name.strip()
+    if not clean_name:
+        raise HTTPException(status_code=400, detail="'name' must not be empty.")
+
+    queue: asyncio.Queue = asyncio.Queue()
+
+    def callback(event: str, data: Any) -> None:
+        queue.put_nowait((event, data))
+
+    async def event_generator():
+        # Launch lookup in background
+        task = asyncio.create_task(
+            lookup_company(
+                name=clean_name,
+                db_path=DB_PATH,
+                refresh=refresh,
+                progress_callback=callback,
+            )
+        )
+
+        while not task.done() or not queue.empty():
+            try:
+                event, data = await asyncio.wait_for(queue.get(), timeout=0.3)
+                yield f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+            except asyncio.TimeoutError:
+                continue
+            except Exception:
+                break
+
+        try:
+            res = await task
+            yield f"event: done\ndata: {json.dumps(res, ensure_ascii=False)}\n\n"
+        except Exception as exc:
+            yield f"event: error\ndata: {json.dumps({'error': str(exc)})}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @app.get("/api/companies")
