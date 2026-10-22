@@ -6,7 +6,8 @@ import type {
   SavedCompanyLead,
 } from '../types';
 
-const API_BASE = '/api';
+const BACKEND_URL = ((import.meta as any).env?.VITE_API_URL || '').trim().replace(/\/$/, '');
+export const API_BASE = BACKEND_URL ? `${BACKEND_URL}/api` : '/api';
 
 export async function getHealth(): Promise<HealthResponse> {
   const res = await fetch(`${API_BASE}/health`);

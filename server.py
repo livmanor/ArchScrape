@@ -53,22 +53,31 @@ app = FastAPI(
     version="2.0.0",
 )
 
-# Restrict CORS to specified origins from environment or safe defaults
+# Restrict CORS to specified origins or Vercel preview/production domains
 raw_cors = os.getenv("CORS_ORIGINS", "").strip()
-allowed_origins = [o.strip() for o in raw_cors.split(",") if o.strip()] if raw_cors else [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-]
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=allowed_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+if raw_cors == "*":
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+else:
+    allowed_origins = [o.strip() for o in raw_cors.split(",") if o.strip()] if raw_cors else [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=allowed_origins,
+        allow_origin_regex=r"https://.*\.vercel\.app",
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 
 # ─── Request / Response Models ────────────────────────────────────────────────

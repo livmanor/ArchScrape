@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: archguild-scrape-api
+    runtime: python
+    region: oregon
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.0
+      - key: GOOGLE_PLACES_API_KEY
+        sync: false
+      - key: FIRECRAWL_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENROUTER_MODEL
+        value: google/gemini-2.5-flash
+      - key: OPENROUTER_FALLBACK_MODEL
+        value: meta-llama/llama-3.3-70b-instruct
+      - key: CORS_ORIGINS
+        sync: false
+    disk:
+      name: archscale-data
+      mountPath: /app/data
+      sizeGB: 1
