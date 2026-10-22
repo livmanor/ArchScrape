@@ -259,6 +259,18 @@ export const App: React.FC = () => {
               </div>
             )}
 
+            {/* Deep Crawl Progress Banner */}
+            {isAnalyzing && (
+              <div className="mb-4 flex items-center gap-3 px-4 py-3 rounded-xl bg-indigo-50 border border-indigo-200 text-sm text-indigo-800">
+                <div className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-solid border-indigo-600 border-r-transparent flex-shrink-0" />
+                <div className="flex-1">
+                  <span className="font-semibold">Deep crawl in progress</span>
+                  <span className="text-indigo-500 ml-2 text-xs">{analysisElapsed}s elapsed · typically 30–90 seconds</span>
+                </div>
+                <span className="text-xs text-indigo-400">Please wait…</span>
+              </div>
+            )}
+
             {/* Results Grid */}
             {isSearching ? (
               <div className="p-16 text-center bg-white rounded-xl border border-slate-200">
@@ -279,6 +291,8 @@ export const App: React.FC = () => {
                     onInspect={handleInspectCompany}
                     onSaveQuick={handleQuickSave}
                     isAnalyzing={isAnalyzing}
+                    analyzingCompanyId={analyzingCompanyId}
+                    analysisElapsed={analysisElapsed}
                   />
                 ))}
               </div>
