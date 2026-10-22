@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Search, MapPin, Tag, Flame, RefreshCw, Sparkles } from 'lucide-react';
+import { Search, MapPin, Tag, RefreshCw, Sparkles } from 'lucide-react';
 import type { PresetsResponse } from '../types';
 
 interface SearchBarProps {
@@ -11,23 +11,21 @@ interface SearchBarProps {
   }) => void;
   isLoading: boolean;
   presets: PresetsResponse | null;
-  firecrawlAvailable: boolean;
+  firecrawlAvailable?: boolean;
 }
 
 export const SearchBar: React.FC<SearchBarProps> = ({
   onSearch,
   isLoading,
   presets,
-  firecrawlAvailable,
 }) => {
   const [query, setQuery] = useState('');
   const [city, setCity] = useState('All');
   const [category, setCategory] = useState('all');
-  const [live, setLive] = useState(firecrawlAvailable);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onSearch({ query: query.trim(), city, category, live });
+    onSearch({ query: query.trim(), city, category, live: true });
   };
 
   const handleQuickSearch = (item: {
@@ -42,7 +40,7 @@ export const SearchBar: React.FC<SearchBarProps> = ({
       query: item.query,
       city: item.city,
       category: item.category,
-      live,
+      live: true,
     });
   };
 
@@ -103,53 +101,25 @@ export const SearchBar: React.FC<SearchBarProps> = ({
           </div>
         </div>
 
-        {/* Action Controls & Options Row */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-slate-100">
-          {/* Live Web Toggle */}
-          <div className="flex items-center space-x-2">
-            <label className="flex items-center cursor-pointer select-none text-xs text-slate-600">
-              <input
-                type="checkbox"
-                checked={live}
-                onChange={(e) => setLive(e.target.checked)}
-                className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-slate-300 rounded mr-2"
-              />
-              <span className="flex items-center space-x-1">
-                <Flame
-                  className={`h-3.5 w-3.5 ${
-                    live ? 'text-amber-500' : 'text-slate-400'
-                  }`}
-                />
-                <span>Live Web Discovery (Firecrawl)</span>
-              </span>
-            </label>
-            {!firecrawlAvailable && live && (
-              <span className="text-xs text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
-                Key missing in env, will use local directory
-              </span>
+        {/* Action Controls Row */}
+        <div className="flex justify-end pt-2 border-t border-slate-100">
+          <button
+            type="submit"
+            disabled={isLoading}
+            className="w-full sm:w-auto px-6 py-2.5 rounded-lg bg-indigo-600 text-white font-medium text-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition shadow-sm flex items-center justify-center space-x-2 disabled:opacity-70 disabled:cursor-not-allowed"
+          >
+            {isLoading ? (
+              <>
+                <RefreshCw className="h-4 w-4 animate-spin" />
+                <span>Discovering Companies...</span>
+              </>
+            ) : (
+              <>
+                <Search className="h-4 w-4" />
+                <span>Discover Companies</span>
+              </>
             )}
-          </div>
-
-          {/* Search Button */}
-          <div className="flex items-center space-x-2">
-            <button
-              type="submit"
-              disabled={isLoading}
-              className="w-full sm:w-auto px-6 py-2.5 rounded-lg bg-indigo-600 text-white font-medium text-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition shadow-sm flex items-center justify-center space-x-2 disabled:opacity-70 disabled:cursor-not-allowed"
-            >
-              {isLoading ? (
-                <>
-                  <RefreshCw className="h-4 w-4 animate-spin" />
-                  <span>Discovering Companies...</span>
-                </>
-              ) : (
-                <>
-                  <Search className="h-4 w-4" />
-                  <span>Discover Companies</span>
-                </>
-              )}
-            </button>
-          </div>
+          </button>
         </div>
 
         {/* Quick Search Preset Chips */}

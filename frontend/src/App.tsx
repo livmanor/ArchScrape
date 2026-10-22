@@ -34,7 +34,6 @@ export const App: React.FC = () => {
 
   // Search screen states
   const [searchResults, setSearchResults] = useState<SearchHit[]>([]);
-  const [searchSource, setSearchSource] = useState<'firecrawl' | 'local_directory' | null>(null);
   const [searchMeta, setSearchMeta] = useState<{ query: string; city: string; count: number } | null>(null);
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
@@ -114,7 +113,6 @@ export const App: React.FC = () => {
       );
 
       setSearchResults(res.results || []);
-      setSearchSource(res.source);
       setSearchMeta({
         query: params.query || 'All firms',
         city: params.city || 'All locations',
@@ -213,7 +211,6 @@ export const App: React.FC = () => {
               onSearch={handleSearch}
               isLoading={isSearching}
               presets={presets}
-              firecrawlAvailable={Boolean(health?.firecrawl_available)}
             />
 
             {/* Screen B: Search Results */}
@@ -243,12 +240,7 @@ export const App: React.FC = () => {
                 <div className="text-xs text-slate-500 flex items-center space-x-1.5">
                   <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
                   <span>
-                    Source:{' '}
-                    <strong>
-                      {searchSource === 'firecrawl'
-                        ? '🔥 Firecrawl Live Web Search'
-                        : '🗄️ Curated Registry Directory'}
-                    </strong>
+                    Source: <strong>Firecrawl Web Discovery</strong>
                   </span>
                 </div>
               </div>

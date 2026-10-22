@@ -123,12 +123,12 @@ def search_companies(
     q: Optional[str] = Query(None, description="Alias for query"),
     city: Optional[str] = Query(None, description="Filter or target city"),
     category: Optional[str] = Query(None, description="Industry category filter"),
-    engine: str = Query("auto", description="auto | firecrawl | directory"),
-    live: Optional[bool] = Query(None, description="Toggle for live Firecrawl search"),
+    engine: str = Query("firecrawl", description="Always firecrawl"),
+    live: Optional[bool] = Query(True, description="Always live Firecrawl search"),
     limit: int = Query(10, ge=1, le=50, description="Max results to return"),
 ):
     """
-    Discover candidate companies from live web (Firecrawl) or curated offline directory.
+    Discover candidate companies via Firecrawl live web search.
     Returns structured candidate leads with official site resolution status.
     """
     search_term = (query or q or "").strip()
@@ -139,40 +139,15 @@ def search_companies(
     full_q = search_term
 
     hits = []
-    actual_engine = engine
-
-    # Determine engine
-    has_fc = fc_available()
-    if live is False:
-        use_fc = False
-    elif live is True:
-        use_fc = has_fc
-    elif engine == "auto":
-        use_fc = has_fc
-    elif engine == "firecrawl":
-        use_fc = has_fc
-    else:
-        use_fc = False
-
+    actual_engine = "firecrawl"
     error_msg = None
-    if use_fc:
-        try:
-            actual_engine = "firecrawl"
-            hits = firecrawl_search(full_q, limit=limit, scrape_content=True)
-            if not hits:
-                # Fallback to local directory
-                local_hits = search_local_directory(full_q, limit=limit)
-                if local_hits:
-                    hits = local_hits
-                    actual_engine = "directory_fallback"
-        except Exception as exc:
-            logger.warning("[Search] Firecrawl failed: %s. Falling back to curated directory.", exc)
-            error_msg = str(exc)
-            hits = search_local_directory(full_q, limit=limit)
-            actual_engine = "directory_fallback"
-    else:
-        actual_engine = "directory"
-        hits = search_local_directory(full_q, limit=limit)
+
+    try:
+        hits = firecrawl_search(full_q, limit=limit, scrape_content=True)
+    except Exception as exc:
+        logger.warning("[Search] Firecrawl failed: %s", exc)
+        error_msg = str(exc)
+        hits = []
 
     # Serialize and filter hits
     filtered_records = []
