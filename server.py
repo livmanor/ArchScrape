@@ -174,18 +174,26 @@ def search_companies(
         actual_engine = "directory"
         hits = search_local_directory(full_q, limit=limit)
 
-    # Filter by category if requested
+    # Serialize and filter hits
     filtered_records = []
+    from urllib.parse import urlparse
     for h in hits:
-        d = h.to_dict()
-        if category and category.lower() != "all":
-            # Check services or category
+        # Support objects with to_dict() and plain dicts
+        try:
+            d = h.to_dict() if hasattr(h, "to_dict") else (h if isinstance(h, dict) else vars(h))
+        except Exception:
+            continue
+
+        # Only apply category filter when there is service data to check;
+        # Firecrawl hits often have no services list — don't silently drop them
+        if category and category.lower() not in ("", "all"):
             srvs = [s.lower() for s in d.get("services", [])]
-            cat_lower = category.lower()
-            if cat_lower == "interior" and not any("interior" in s for s in srvs):
-                continue
-            if cat_lower == "architecture" and not any("architect" in s for s in srvs):
-                continue
+            if srvs:
+                cat_lower = category.lower()
+                if cat_lower == "interior" and not any("interior" in s for s in srvs):
+                    continue
+                if cat_lower == "architecture" and not any("architect" in s for s in srvs):
+                    continue
 
         # Normalize fields for UI
         name = d.get("name") or d.get("organisation") or d.get("title") or "Unnamed Practice"
@@ -201,7 +209,6 @@ def search_companies(
             norm_status = "not_found"
             is_ver = False
 
-        from urllib.parse import urlparse
         u = d.get("url") or ""
         dom = d.get("domain") or (urlparse(u).netloc if u else "")
 
@@ -216,7 +223,7 @@ def search_companies(
 
     return {
         "ok": True,
-        "query": clean_q,
+        "query": full_q,
         "city": city or "",
         "engine": actual_engine,
         "source": actual_engine,
