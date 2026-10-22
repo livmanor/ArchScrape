@@ -612,6 +612,60 @@ def _extract_team_members(soup: BeautifulSoup, source_url: str) -> list[tuple[st
                 rank = _designation_rank(desig)
                 team_members.append((cand_name, desig, rank, snippet, "Source-supported"))
 
+    # 5. First-person bio statements & meta tags:
+    # "I'm Shanker De, India's First and Exclusive ArchScale Business Coach..."
+    # "My name is Shanker De, Founder..."
+    # "Shanker De is the Founder / CEO..."
+    texts_to_check = [text]
+    for meta_tag in soup.find_all("meta"):
+        content = meta_tag.get("content", "")
+        if content and len(content) > 15:
+            texts_to_check.append(content)
+
+    bio_pat = re.compile(
+        r"(?:I'?m|I am|My name is)\s+"
+        r"(?:(?:Ar\.?|Architect|Mr\.?|Ms\.?|Mrs\.?|Dr\.?)\s+)?"
+        r"([A-Z][a-zA-Z.'-]*(?:\s+[A-Z][a-zA-Z.'-]*){1,3})"
+        r"(?:\s*,\s*([^.\n\r]+?))?"
+        r"(?:\.|\n|$)"
+    )
+    for sample in texts_to_check:
+        for m_bio in bio_pat.finditer(sample):
+            cand_name = _clean_name(m_bio.group(1))
+            if cand_name and cand_name.lower() not in seen_names:
+                raw_desig = (m_bio.group(2) or "").strip()
+                m_t = _DESIGNATION_RE.search(raw_desig)
+                if m_t:
+                    desig = m_t.group(0).title()
+                elif any(k in raw_desig.lower() for k in ("founder", "coach", "architect", "director", "lead", "principal", "head", "partner", "ceo")):
+                    desig = raw_desig[:40].title()
+                else:
+                    desig = "Founder & Principal"
+                rank = _designation_rank(desig)
+                seen_names.add(cand_name.lower())
+                start = max(0, m_bio.start() - 20)
+                end = min(len(sample), m_bio.end() + 60)
+                snippet = _snippet(sample[start:end])
+                team_members.append((cand_name, desig, rank, snippet, "Source-supported"))
+
+        # "Name is the Founder / CEO"
+        name_is_pat = re.compile(
+            r"([A-Z][a-zA-Z.'-]*(?:\s+[A-Z][a-zA-Z.'-]*){1,3})\s+"
+            r"(?:is|serves as|works as)\s+(?:the\s+|an?\s+)?"
+            rf"({_DESIGNATION_RE.pattern})\b",
+            re.IGNORECASE,
+        )
+        for m_is in name_is_pat.finditer(sample):
+            cand_name = _clean_name(m_is.group(1))
+            if cand_name and cand_name.lower() not in seen_names:
+                desig = m_is.group(2).strip().title()
+                rank = _designation_rank(desig)
+                seen_names.add(cand_name.lower())
+                start = max(0, m_is.start() - 20)
+                end = min(len(sample), m_is.end() + 60)
+                snippet = _snippet(sample[start:end])
+                team_members.append((cand_name, desig, rank, snippet, "Source-supported"))
+
     return team_members
 
 
