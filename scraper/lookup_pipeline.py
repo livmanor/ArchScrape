@@ -134,36 +134,35 @@ def _fc_headers() -> dict:
 
 def _firecrawl_map(website: str) -> list[str]:
     """
-    Call Firecrawl /v1/map on *website* with search terms contact/about/team.
+    Call Firecrawl /v1/map on *website* with a single combined request.
     Returns a list of matching URLs (may be empty on error).
     """
     urls: list[str] = []
-    for term in ("contact", "about", "team"):
-        try:
-            resp = requests.post(
-                f"{FIRECRAWL_API_URL}/v1/map",
-                headers=_fc_headers(),
-                json={
-                    "url": website,
-                    "search": term,
-                    "limit": 10,
-                },
-                timeout=20,
+    try:
+        resp = requests.post(
+            f"{FIRECRAWL_API_URL}/v1/map",
+            headers=_fc_headers(),
+            json={
+                "url": website,
+                "search": "contact about team",
+                "limit": 15,
+            },
+            timeout=15,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            # v1/map returns {"links": [...]} or {"urls": [...]}
+            links = data.get("links") or data.get("urls") or []
+            for link in links:
+                if isinstance(link, str) and link not in urls:
+                    urls.append(link)
+        else:
+            logger.warning(
+                "[FC Map] HTTP %d for '%s': %s",
+                resp.status_code, website, resp.text[:200],
             )
-            if resp.status_code == 200:
-                data = resp.json()
-                # v1/map returns {"links": [...]} or {"urls": [...]}
-                links = data.get("links") or data.get("urls") or []
-                for link in links:
-                    if isinstance(link, str) and link not in urls:
-                        urls.append(link)
-            else:
-                logger.warning(
-                    "[FC Map] HTTP %d for '%s' (term='%s'): %s",
-                    resp.status_code, website, term, resp.text[:200],
-                )
-        except Exception as exc:
-            logger.warning("[FC Map] Error mapping '%s' (term='%s'): %s", website, term, exc)
+    except Exception as exc:
+        logger.warning("[FC Map] Error mapping '%s': %s", website, exc)
     return urls
 
 
@@ -199,7 +198,7 @@ def _filter_relevant_pages(candidate_urls: list[str], homepage: str) -> list[str
                 selected.append(url)
                 break
 
-        if len(selected) >= 3:
+        if len(selected) >= 2:
             break
 
     return selected
@@ -208,14 +207,14 @@ def _filter_relevant_pages(candidate_urls: list[str], homepage: str) -> list[str
 def _firecrawl_scrape(url: str) -> dict:
     """
     Call Firecrawl /v1/scrape on a single URL.
-    Params: formats ["markdown","links","json"], waitFor 3000, onlyMainContent false.
+    Params: formats ["markdown","links","json"], waitFor 1500, onlyMainContent false.
     JSON extraction prompt encourages literal-only extraction.
     Returns the raw JSON response dict (may be empty on error).
     """
     payload = {
         "url": url,
         "formats": ["markdown", "links", "json"],
-        "waitFor": 3000,
+        "waitFor": 1500,
         "onlyMainContent": False,
         "jsonOptions": {
             "prompt": (
@@ -229,7 +228,7 @@ def _firecrawl_scrape(url: str) -> dict:
             f"{FIRECRAWL_API_URL}/v1/scrape",
             headers=_fc_headers(),
             json=payload,
-            timeout=60,
+            timeout=40,
         )
         if resp.status_code == 200:
             return resp.json().get("data") or {}
