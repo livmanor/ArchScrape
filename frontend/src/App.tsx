@@ -26,9 +26,10 @@ import { SearchBar } from './components/SearchBar';
 import { CompanyCard } from './components/CompanyCard';
 import { CompanyDetailsModal } from './components/CompanyDetailsModal';
 import { SavedDirectoryTable } from './components/SavedDirectoryTable';
+import { LandingPage } from './components/LandingPage';
 
 export const App: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'search' | 'directory'>('search');
+  const [activeTab, setActiveTab] = useState<'landing' | 'search' | 'directory'>('landing');
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [presets, setPresets] = useState<PresetsResponse | null>(null);
 

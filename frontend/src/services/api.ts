@@ -140,3 +140,17 @@ export function getExportUrl(search?: string, city?: string, category?: string, 
   if (status && status !== 'All') params.append('status', status);
   return `${API_BASE}/export?${params.toString()}`;
 }
+
+export async function lookupCompany(name: string, refresh: boolean = false): Promise<any> {
+  const res = await fetch(`${API_BASE}/lookup`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, refresh }),
+  });
+  if (!res.ok) {
+    const errorBody = await res.json().catch(() => ({}));
+    throw new Error(errorBody.detail || `Lookup failed with HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
