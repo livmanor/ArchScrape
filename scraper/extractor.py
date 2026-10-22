@@ -896,8 +896,8 @@ def _extract_brand_from_title(title: str, domain: str) -> Optional[str]:
     if not title:
         return None
     raw = re.sub(r"\s+", " ", title).strip()
-    # Split by common title separators
-    parts = re.split(r"\s*[|—–\-::]\s*", raw)
+    # Split by common title separators (including unicode dashes and mojibake dashes)
+    parts = re.split(r"\s*[|—–\-::\u2010-\u2015\xe2\x80\x94\xe2\x80\x93\uff5c]\s*|\s+[-—–]\s+", raw)
     candidates = []
     for p in parts:
         p_clean = p.strip()
@@ -925,39 +925,15 @@ def _extract_brand_from_title(title: str, domain: str) -> Optional[str]:
 def _extract_org_name_from_html(soup: BeautifulSoup, source_url: str) -> list[Candidate]:
     """
     Extract org name:
-    1. Scan headings (h1 to h6), strictly filtering generic headings ("About Us", "Contact Us", "Overview", "Home", "Welcome", "Team", etc.)
-    2. Fall back to <title> tag brand name
-    3. Fall back to domain key
+    1. Try <title> tag brand name first (highest signal for official company/brand name).
+    2. Fall back to non-generic headings (h1 to h3), filtering slogans, sentences, and generic sections.
+    3. Fall back to domain key.
     """
     from scraper.validator import normalise_domain
     dom = normalise_domain(source_url)
     candidates: list[Candidate] = []
 
-    path_lower = urllib.parse.urlparse(source_url).path.lower()
-    is_project_page = any(kw in path_lower for kw in ("project", "portfolio", "work", "detail", "gallery"))
-
-    # 1. Non-generic heading across all heading levels (skip on individual project detail pages)
-    if not is_project_page:
-        for tag_name in ("h1", "h2", "h3", "h4", "h5", "h6"):
-            for tag in soup.find_all(tag_name):
-                text = _clean(tag.get_text(separator=" ", strip=True))
-                if not text:
-                    continue
-                text_lower = text.lower().strip()
-                if (
-                    3 < len(text) < 120
-                    and text_lower not in _GENERIC_ORG_HEADINGS
-                    and not any(text_lower.startswith(x) for x in _GENERIC_ORG_HEADINGS)
-                    and text_lower not in _INVALID_NAME_WORDS
-                ):
-                    candidates.append(Candidate(
-                        "org_name", text, source_url,
-                        f"<{tag_name}>{text}</{tag_name}>",
-                        "html_content",
-                    ))
-                    return candidates
-
-    # 2. Fall back to <title> tag brand name
+    # 1. Primary: <title> tag brand name
     title = soup.title.string if soup.title and soup.title.string else None
     if title:
         brand = _extract_brand_from_title(title, dom)
@@ -968,6 +944,35 @@ def _extract_org_name_from_html(soup: BeautifulSoup, source_url: str) -> list[Ca
                 "html_meta",
             ))
             return candidates
+
+    # 2. Fallback: Scan headings (skip on individual project detail pages, sentences, slogans)
+    path_lower = urllib.parse.urlparse(source_url).path.lower()
+    is_project_page = any(kw in path_lower for kw in ("project", "portfolio", "work", "detail", "gallery"))
+
+    if not is_project_page:
+        for tag_name in ("h1", "h2", "h3"):
+            for tag in soup.find_all(tag_name):
+                text = _clean(tag.get_text(separator=" ", strip=True))
+                if not text:
+                    continue
+                text_lower = text.lower().strip()
+                words = text.split()
+                # Exclude slogans, full sentences with commas, periods, or > 6 words
+                if (
+                    3 < len(text) < 70
+                    and len(words) <= 6
+                    and not any(ch in text for ch in (",", ";", "!", "?", "—", "–"))
+                    and not text.endswith(".")
+                    and text_lower not in _GENERIC_ORG_HEADINGS
+                    and not any(text_lower.startswith(x) for x in _GENERIC_ORG_HEADINGS)
+                    and text_lower not in _INVALID_NAME_WORDS
+                ):
+                    candidates.append(Candidate(
+                        "org_name", text, source_url,
+                        f"<{tag_name}>{text}</{tag_name}>",
+                        "html_content",
+                    ))
+                    return candidates
 
     # 3. Fall back to domain key
     if dom:

@@ -434,7 +434,13 @@ def find_and_extract_company_lead(
     org_name = None
     if resolution.get("notes") and not resolution["notes"].startswith("http"):
         clean_note = resolution["notes"].split(" - ")[0].strip()
-        if clean_note and len(clean_note) >= 3:
+        if (
+            clean_note
+            and len(clean_note) >= 3
+            and not any(clean_note.lower().startswith(x) for x in (
+                "direct url", "direct domain", "verified via", "no input", "found via"
+            ))
+        ):
             org_name = clean_note
     elif target_input and len(target_input.strip()) >= 3 and "." not in target_input:
         org_name = target_input.strip()

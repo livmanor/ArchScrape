@@ -296,8 +296,12 @@ def fetch(url: str, *, session: Optional[requests.Session] = None, skip_robots: 
                 break
 
         raw = b"".join(chunks)
-        # Detect encoding
-        encoding = resp.encoding or resp.apparent_encoding or "utf-8"
+        # Detect encoding: prefer UTF-8 over RFC default ISO-8859-1 for HTML5
+        enc = resp.encoding
+        if not enc or enc.lower() in ("iso-8859-1", "latin-1"):
+            encoding = "utf-8"
+        else:
+            encoding = enc or resp.apparent_encoding or "utf-8"
         try:
             html = raw.decode(encoding, errors="replace")
         except (LookupError, UnicodeDecodeError):
