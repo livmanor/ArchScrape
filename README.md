@@ -1,214 +1,99 @@
-# ArchScale Intelligence Platform
+# ArchScrape
 
-A company intelligence platform that discovers and collects publicly available business information about architecture firms and interior design companies across India.
+ArchScrape is an automated company intelligence and lead discovery platform for architecture and interior design practices. Built with a React + TypeScript frontend and a FastAPI backend powered by Firecrawl, Google Places, and OpenRouter AI.
 
----
-
-## Quick Start
-
-### 1. Prerequisites
-
-- Python 3.11 or later (tested on 3.13)
-- `pip` (or `py -m pip` on Windows)
-
-### 2. Install Dependencies
-
-```powershell
-# Windows — use the py launcher
-py -m pip install -r requirements.txt
-```
-
-### 3. Install Playwright Browsers (Required for JS-rendered Sites)
-
-Many modern architecture firm websites are JavaScript Single Page Applications.
-The Playwright fallback handles these automatically — but the browser must be installed once:
-
-```powershell
-py -m playwright install chromium --with-deps
-```
-
-> **Note:** If you skip this step, the app still works. JS-rendered pages will return empty content
-> instead of failing with an error. The fallback is silent and graceful.
-
-### 4. Prepare Your Approved URL List
-
-Edit `data/seed_urls.csv` with the company websites you want to scrape.
-The file must have these columns:
-
-| Column     | Required | Description                                      |
-|------------|----------|--------------------------------------------------|
-| `url`      | Yes      | Full company website URL (https preferred)       |
-| `category` | Yes      | `architecture`, `interior`, or `other`           |
-| `notes`    | No       | Human-readable notes (ignored by the scraper)   |
-
-Example:
-
-```csv
-url,category,notes
-https://www.morphogenesis.org,architecture,Morphogenesis Delhi
-https://www.designcafe.com,interior,Design Cafe Bengaluru
-```
-
-### 4. Run the Application
-
-```powershell
-py -m streamlit run app.py
-```
-
-The dashboard will open in your browser at `http://localhost:8501`.
-
-### 5. Run the First Scrape
-
-1. Open the app in your browser.
-2. Go to **⚙️ Scrape Control** in the left navigation.
-3. Verify the seed URL list.
-4. Click **🚀 Start Scrape Run**.
-5. Watch the live log for progress.
-6. After completion, go to **🔍 Browse Companies** to see results.
+- **Live Web App:** [https://archscrape.vercel.app](https://archscrape.vercel.app)
+- **Live API:** [https://archscrape.onrender.com](https://archscrape.onrender.com)
 
 ---
 
-## Running Tests
+## Prerequisites
 
-```powershell
-# Run all offline tests (no network required):
-py -m pytest tests/ -v
+- **Node.js** 18+ & `npm`
+- **Python** 3.11+
+- API Keys:
+  - [Firecrawl API Key](https://firecrawl.dev)
+  - [OpenRouter API Key](https://openrouter.ai)
+  - [Google Places API Key](https://console.cloud.google.com/) *(optional)*
 
-# Run including live network integration tests (requires internet + Firecrawl reachable):
-py -m pytest tests/ -v -m network
+---
+
+## Quick Setup
+
+### 1. Clone the Repository
+
+```bash
+git clone https://github.com/manishns2007/ArchScrape.git
+cd ArchScrape
 ```
 
-All offline tests use synthetic HTML fixtures and temporary databases.
-No real company data is embedded in test files.
-Network-dependent tests are marked `@pytest.mark.network` and excluded by default.
+### 2. Backend Setup (FastAPI)
+
+1. Create and activate a Python virtual environment:
+   ```bash
+   # Windows
+   py -m venv .venv
+   .venv\Scripts\activate
+
+   # macOS / Linux
+   python3 -m venv .venv
+   source .venv/bin/activate
+   ```
+
+2. Install backend dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+3. Configure environment variables in `.env` (project root):
+   ```env
+   FIRECRAWL_API_KEY=your_firecrawl_api_key
+   OPENROUTER_API_KEY=your_openrouter_api_key
+   GOOGLE_PLACES_API_KEY=your_google_places_api_key
+   OPENROUTER_MODEL=google/gemini-2.5-flash
+   OPENROUTER_FALLBACK_MODEL=meta-llama/llama-3.3-70b-instruct
+   CORS_ORIGINS=http://localhost:5173,https://archscrape.vercel.app
+   ```
+
+4. Start the backend server:
+   ```bash
+   uvicorn server:app --host 127.0.0.1 --port 8000 --reload
+   ```
+   *API will run at `http://127.0.0.1:8000` (docs at `http://127.0.0.1:8000/docs`).*
 
 ---
 
-## Project Structure
+### 3. Frontend Setup (React + Vite)
 
+1. Navigate to the frontend directory:
+   ```bash
+   cd frontend
+   npm install
+   ```
+
+2. *(Optional)* Configure local environment in `frontend/.env`:
+   ```env
+   VITE_API_URL=http://127.0.0.1:8000
+   ```
+
+3. Start the frontend development server:
+   ```bash
+   npm run dev
+   ```
+   *App will open at `http://localhost:5173`.*
+
+---
+
+## Production Deployment
+
+- **Frontend (Vercel):** Configured with root [`vercel.json`](./vercel.json) and deployed via `vercel --prod` with `VITE_API_URL=https://archscrape.onrender.com`.
+- **Backend (Render):** Managed via [`render.yaml`](./render.yaml) as a Free Plan Web Service (`uvicorn server:app --host 0.0.0.0 --port $PORT`).
+
+---
+
+## Testing
+
+```bash
+# Run backend test suite
+pytest tests/ -v
 ```
-ArchScrape/
-├── app.py                     # Streamlit dashboard (entry point)
-├── requirements.txt
-├── conftest.py                # pytest path configuration
-├── data/
-│   ├── seed_urls.csv          # Approved company URLs (edit this)
-│   └── archscale.db           # SQLite database (auto-created)
-├── database/
-│   ├── db.py                  # Persistence layer (parameterised SQL)
-│   └── schema.sql             # Database schema
-├── scraper/
-│   ├── validator.py           # URL validation + SSRF protection
-│   ├── fetcher.py             # Safe HTTP fetching + robots.txt
-│   ├── extractor.py           # HTML/JSON-LD extraction pipeline
-│   └── discovery.py           # Company URL discovery (seed CSV + future sources)
-├── services/
-│   └── company_service.py     # Orchestrates scrape pipeline
-└── tests/
-    ├── test_validator.py
-    ├── test_extractor.py
-    └── test_database.py
-```
-
----
-
-## Features
-
-### Dashboard
-- Summary metrics: companies, evidence rows, review queue, last run status
-- Browse, search, and filter companies by name, owner, city, category, verification status
-- Company detail view with all extracted fields
-- Field-level evidence inspector with source URLs, supporting text, and reviewer controls
-- Verification status management per evidence row (Extracted → Source checked → Cross-verified)
-- CSV export of filtered results
-- Scrape control panel with live log, error display, run history, and error log
-
-### Scraper
-- **robots.txt compliance** — checked before every URL
-- **SSRF protection** — blocks localhost, private IP ranges, cloud metadata endpoints
-- **Redirect re-validation** — SSRF check applied to redirect destinations
-- **Rate limiting** — configurable per-domain delay (default 2 seconds)
-- **Size limit** — 5 MB response cap to prevent memory issues
-- **Sub-page discovery** — automatically finds About, Contact, Team, Leadership pages
-- **JSON-LD extraction** — schema.org Organization, LocalBusiness, Person
-- **HTML meta extraction** — Open Graph, description tags
-- **Heuristic extraction** — phone numbers (Indian patterns), emails, social links, city names
-
-### Data Quality
-- Every field retains: extracted value, source URL, supporting text, method, timestamp, status
-- **Owner/founder fields marked "Needs review"** — never auto-verified
-- Multiple candidates per field stored — the best is not arbitrarily chosen
-- Deduplication: repeated scrapes update timestamps, never create duplicate rows
-- Honest missing-data reporting: `Not found` status, never fabricated values
-
----
-
-## Configuration
-
-| Setting              | Location                   | Default                        |
-|----------------------|----------------------------|--------------------------------|
-| Seed URL list        | `data/seed_urls.csv`       | 10 example architecture firms  |
-| Database location    | `data/archscale.db`        | Auto-created                   |
-| Request timeout      | `scraper/fetcher.py`       | 15 seconds                     |
-| Max response size    | `scraper/fetcher.py`       | 5 MB                           |
-| Rate limit (delay)   | `scraper/fetcher.py`       | 2 seconds per domain           |
-| Max sub-pages        | `scraper/fetcher.py`       | 10 per company                 |
-
----
-
-## Limitations
-
-1. **Owner/founder identification** is a high-risk inference. The platform marks all such candidates "Needs review". A human reviewer must confirm ownership before treating the record as verified.
-
-2. **JavaScript-rendered content** cannot be extracted. Many modern websites render their contact and about pages with JavaScript. The scraper only processes server-rendered HTML.
-
-3. **Anti-bot measures** — sites with CAPTCHAs, bot detection, or IP blocking will result in HTTP errors recorded in the error log.
-
-4. **robots.txt** — sites that disallow all crawlers in `robots.txt` are skipped. The URL and reason are logged.
-
-5. **Phone number extraction** uses regex heuristics tuned for Indian formats. International numbers may be missed or mis-classified.
-
-6. **City detection** uses a fixed list of Indian cities. Smaller cities or non-standard spellings may not be detected.
-
-7. **No automatic company discovery** — the MVP relies on the manually approved seed CSV. The `discovery.py` module is designed to accept future directory sources without changing the rest of the pipeline.
-
----
-
-## Verification Instructions
-
-To demonstrate the platform to stakeholders:
-
-1. Run `py -m streamlit run app.py`
-2. Open **⚙️ Scrape Control** and start a scrape
-3. Go to **🔍 Browse Companies** — select any company
-4. Click through to **🔬 Evidence Inspector**
-5. For each field, click the source URL link to verify the value on the live page
-6. Use the status dropdown to advance verified values to "Cross-verified"
-7. Export results to CSV using the export button
-
-> **Important:** All values displayed originate from publicly accessible web pages. The extraction timestamp and source URL are stored alongside every value. No records are invented, inferred, or fabricated.
-
----
-
-## Data Retention
-
-To delete all scraped data:
-```powershell
-Remove-Item data\archscale.db
-```
-The database will be recreated (empty) on the next application start.
-
-To remove a specific company's data, use the SQLite command line:
-```powershell
-py -c "import sqlite3; conn=sqlite3.connect('data/archscale.db'); conn.execute('DELETE FROM companies WHERE domain_key=?', ('example.com',)); conn.commit()"
-```
-
----
-
-## Security Notes
-
-- URL validation blocks private IP ranges (RFC 1918), loopback, link-local, and cloud metadata endpoints to prevent SSRF.
-- All SQL queries use parameterised statements.
-- No credentials or API keys are used or stored.
-- The application makes only outbound HTTP GET requests to explicitly approved URLs.
-- Response size is capped to prevent memory exhaustion.
