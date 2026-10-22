@@ -56,12 +56,20 @@ _SOCIAL_DOMAINS: dict[str, str] = {
 
 # ─── Designation patterns ─────────────────────────────────────────────────────
 _DESIGNATION_RE = re.compile(
-    r"\b(Founding Partners?|Co-Founders?|Founders?|Managing Partners?|Managing Directors?|"
+    r"\b("
+    r"(?:Co-)?Founders?\s*(?:&|and)\s*Principals?(?:\s+Architects?)?|"
+    r"(?:Co-)?Founders?\s*(?:&|and)\s*Managing Directors?|"
+    r"(?:Co-)?Founders?\s*(?:&|and)\s*(?:CEOs?|Chief Executive Officers?|Directors?|Partners?)|"
+    r"Founding Partners?\s*(?:&|and)\s*Principal Architects?|"
+    r"Principal Architects?\s*(?:&|and)\s*Founders?|"
+    r"Principals?\s*(?:&|and)\s*(?:Founders?|Directors?)|"
+    r"Founding Partners?|Co-Founders?|Founders?|Managing Partners?|Managing Directors?|"
     r"Principal Architects?|Design Directors?|Creative Directors?|Directors?|"
     r"CEOs?|Chief Executive Officers?|Partners?|Principals?|Head of Design|"
     r"Lead Architects?|Senior Architects?|Architects?|"
     r"Interior Designers?|Studio Heads?|Business Coach(?:es)?|Coaches?|Presidents?|"
-    r"Studio Directors?|Creative Leads?|Brand Strategists?)\b",
+    r"Studio Directors?|Creative Leads?|Brand Strategists?"
+    r")\b",
     re.IGNORECASE,
 )
 
@@ -374,6 +382,11 @@ _INVALID_NAME_WORDS = {
     "homepage", "profile", "leadership", "people", "awards", "news", "careers",
     "work", "works", "home", "search", "menu", "navigation", "india", "studio",
     "founder", "founders", "director", "architect", "management", "history", "philosophy",
+    "think", "together", "create", "build", "learn", "innovate", "collaborate",
+    "deliver", "ideate", "listen", "transform", "inspire", "envision", "shape",
+    "craft", "reimagine", "explore", "values", "mission", "vision", "approach",
+    "methodology", "process", "culture", "what we do", "why us", "how we work",
+    "the principals", "principals", "directors", "founder", "founders", "leadership",
 } | _NON_PERSON_WORDS
 
 _IGNORE_SECTION_KW = re.compile(
@@ -498,21 +511,30 @@ def _extract_team_members(soup: BeautifulSoup, source_url: str) -> list[tuple[st
     team_members: list[tuple[str, str, int, str, str]] = []
     seen_names: set[str] = set()
 
-    # 1. Cards with class names like team, member, person, profile, leader
-    for card in soup.find_all(["div", "li", "article", "section"], class_=True):
+    # 1. Cards with class names or attributes like team, member, person, profile, leader, caption, role
+    for card in soup.find_all(["div", "li", "article", "section"]):
         if _is_inside_ignored_section(card):
             continue
         card_text_raw = card.get_text(separator=" ", strip=True)
         if _TESTIMONIAL_SALES_RE.search(card_text_raw):
             continue
-        cls_str = " ".join(card.get("class", [])).lower()
-        if any(k in cls_str for k in ("team", "member", "person", "leader", "profile", "bio", "founder", "staff")):
+        cls_str = " ".join(card.get("class", [])).lower() if card.get("class") else ""
+        data_framer = str(card.get("data-framer-name", "")).lower()
+        data_name = str(card.get("data-name", "")).lower()
+        combined_attrs = f"{cls_str} {data_framer} {data_name}"
+
+        is_team_card = any(k in combined_attrs for k in (
+            "team", "member", "person", "leader", "profile", "bio", "founder", "staff", "caption", "speaker", "principal"
+        ))
+        if is_team_card:
             name_tag = (
-                card.find(["h2", "h3", "h4", "h5", "strong", "b"])
+                card.find(attrs={"data-framer-name": re.compile(r"^name$", re.I)})
+                or card.find(["h2", "h3", "h4", "h5", "strong", "b"])
                 or card.find(class_=re.compile(r"name", re.I))
             )
             desig_tag = (
-                card.find(class_=re.compile(r"role|designation|title|position", re.I))
+                card.find(attrs={"data-framer-name": re.compile(r"^role|designation|title|position$", re.I)})
+                or card.find(class_=re.compile(r"role|designation|title|position", re.I))
                 or card.find(["p", "span"])
             )
             if name_tag:
@@ -521,55 +543,94 @@ def _extract_team_members(soup: BeautifulSoup, source_url: str) -> list[tuple[st
                     d_text = desig_tag.get_text(strip=True) if desig_tag else ""
                     match = _DESIGNATION_RE.search(d_text)
                     if match:
-                        desig = match.group(0)
+                        desig = match.group(0).title()
                         rank = _designation_rank(desig)
+                        snippet = _snippet(card_text_raw)
+                        seen_names.add(name_clean.lower())
+                        team_members.append((name_clean, desig, rank, snippet, "Source-supported"))
                     elif 3 < len(d_text) < 40 and not any(w in d_text.lower() for w in ("sales", "marketing", "client", "customer", "project coordinator")):
-                        desig = d_text.strip()
+                        desig = d_text.strip().title()
                         rank = _designation_rank(desig)
-                    else:
-                        desig = "Role unverified"
-                        rank = 99
-                    snippet = _snippet(card_text_raw)
-                    seen_names.add(name_clean.lower())
-                    team_members.append((name_clean, desig, rank, snippet, "Needs review"))
+                        snippet = _snippet(card_text_raw)
+                        seen_names.add(name_clean.lower())
+                        team_members.append((name_clean, desig, rank, snippet, "Needs review"))
 
-    # 2. Heading followed by designation in sibling
+    # 2. Heading followed by designation in sibling or parent-sibling (for Framer/Webflow wrapper containers)
     for h in soup.find_all(["h2", "h3", "h4", "h5"]):
         if _is_inside_ignored_section(h):
             continue
         name_clean = _clean_name(h.get_text(strip=True))
         if name_clean and name_clean.lower() not in seen_names:
-            sib = h.find_next_sibling(["p", "span", "div", "h4", "h5", "h6"])
+            sib = (
+                h.find_next_sibling(["p", "span", "div", "h4", "h5", "h6"])
+                or (h.parent and len(h.parent.find_all(["h1", "h2", "h3", "h4", "h5", "h6"])) == 1 and h.parent.find_next_sibling(["p", "span", "div", "h4", "h5", "h6"]))
+                or (h.parent and h.parent.parent and len(h.parent.parent.find_all(["h1", "h2", "h3", "h4", "h5", "h6"])) == 1 and h.parent.parent.find_next_sibling(["p", "span", "div", "h4", "h5", "h6"]))
+            )
             if sib:
                 sib_text = sib.get_text(strip=True)
                 if _TESTIMONIAL_SALES_RE.search(sib_text):
                     continue
                 match = _DESIGNATION_RE.search(sib_text)
                 if match:
-                    desig = match.group(0)
+                    desig = match.group(0).title()
                     rank = _designation_rank(desig)
                     snippet = f"{name_clean} — {sib_text}"
                     seen_names.add(name_clean.lower())
-                    team_members.append((name_clean, desig, rank, snippet, "Needs review"))
+                    team_members.append((name_clean, desig, rank, snippet, "Source-supported"))
 
-    # 3. Text patterns: "Name, Designation" or "Name - Designation"
+    # 3. Text patterns: "Name, Designation" or adjacent lines: Line i: Name, Line i+1: Designation
     text = soup.get_text(separator="\n", strip=True)
-    for line in text.splitlines():
-        line_clean = line.strip()
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    for i, line_clean in enumerate(lines):
         if not line_clean or len(line_clean) > 120:
             continue
         if _TESTIMONIAL_SALES_RE.search(line_clean):
             continue
-        m = re.match(r"^([A-Z][A-Za-z. '\-]{2,35})\s*(?:,\s*|\s*[-–—]\s*|\s*\(\s*)([A-Za-z\s/]{3,50})\)?$", line_clean)
+        # Single-line check: "Name, Designation" or "Name - Designation"
+        m = re.match(r"^([A-Z][A-Za-z. '\-]{2,35})\s*(?:,\s*|\s*[-–—]\s*|\s*\(\s*)([A-Za-z\s/&]{3,50})\)?$", line_clean)
         if m:
             cand_name = _clean_name(m.group(1))
             cand_desig = m.group(2).strip()
             desig_m = _DESIGNATION_RE.search(cand_desig)
             if cand_name and desig_m and cand_name.lower() not in seen_names:
-                desig = desig_m.group(0)
+                desig = desig_m.group(0).title()
                 rank = _designation_rank(desig)
                 seen_names.add(cand_name.lower())
-                team_members.append((cand_name, desig, rank, line_clean, "Needs review"))
+                team_members.append((cand_name, desig, rank, line_clean, "Source-supported"))
+
+        # Adjacent-line check: Line i is Name, Line i+1 is Designation
+        if i + 1 < len(lines):
+            next_line = lines[i + 1].strip()
+            cand_name = _clean_name(line_clean)
+            if cand_name and cand_name.lower() not in seen_names and len(next_line) <= 60:
+                if not _TESTIMONIAL_SALES_RE.search(next_line):
+                    desig_m = _DESIGNATION_RE.search(next_line)
+                    if desig_m:
+                        desig = desig_m.group(0).title()
+                        rank = _designation_rank(desig)
+                        seen_names.add(cand_name.lower())
+                        snippet = f"{cand_name} — {next_line}"
+                        team_members.append((cand_name, desig, rank, snippet, "Source-supported"))
+
+    # 4. Image alt text metadata: e.g. "Subbiah Sivasubramaniam, Founder & Principal, DIUS Design Consultants"
+    for img in soup.find_all("img", alt=True):
+        alt = (img.get("alt") or "").strip()
+        if not alt or len(alt) < 5 or len(alt) > 150:
+            continue
+        if _TESTIMONIAL_SALES_RE.search(alt):
+            continue
+        parts = [p.strip() for p in re.split(r"\s*,\s*|\s*[-–—]\s*", alt)]
+        if len(parts) >= 2:
+            cand_name = _clean_name(parts[0])
+            if cand_name and cand_name.lower() not in seen_names:
+                for part in parts[1:]:
+                    match_desig = _DESIGNATION_RE.search(part)
+                    if match_desig:
+                        desig = match_desig.group(0).title()
+                        rank = _designation_rank(desig)
+                        seen_names.add(cand_name.lower())
+                        team_members.append((cand_name, desig, rank, f"Image alt: {alt}", "Source-supported"))
+                        break
 
     # 4. Narrative founder patterns:
     # Requires explicit foundation of the firm/practice/company:
@@ -791,6 +852,11 @@ def _extract_about_page(soup: BeautifulSoup, source_url: str) -> list[Candidate]
                 "designation", senior[1], source_url, senior[3],
                 "html_content", status,
             ))
+            for em in executive_members:
+                candidates.append(Candidate(
+                    "team_member", f"{em[0]} ({em[1]})", source_url, em[3],
+                    "html_content", em[4],
+                ))
         else:
             # If team members found but none have verified executive roles:
             for m in team_members[:3]:
