@@ -1,0 +1,70 @@
+TAG: div | CLASS: ['framer-1ulydqv'] | DATA-FRAMER: Title
+TEXT: Reimagining Workspaces: Sunayana Subbiah on Sustainable and Collaborative Office Design
+PARENT: div | PARENT CLASS: ['framer-1gn2qy9']
+PARENT SIBLINGS: []
+--------------------------------------------------
+TAG: p | CLASS: ['framer-text'] | DATA-FRAMER: None
+TEXT: Reimagining Workspaces: Sunayana Subbiah on Sustainable and Collaborative Office Design
+PARENT: div | PARENT CLASS: ['framer-1ulydqv']
+PARENT SIBLINGS: ['div']
+--------------------------------------------------
+TAG: div | CLASS: ['framer-1gn2qy9'] | DATA-FRAMER: Body
+TEXT: Interview Tech Talks | Ft. Ar. Sunayana Subbiah
+PARENT: a | PARENT CLASS: ['framer-1h5y71r', 'framer-h17bcf']
+PARENT SIBLINGS: []
+--------------------------------------------------
+TAG: div | CLASS: ['framer-1ulydqv'] | DATA-FRAMER: Title
+TEXT: Tech Talks | Ft. Ar. Sunayana Subbiah
+PARENT: div | PARENT CLASS: ['framer-1gn2qy9']
+PARENT SIBLINGS: []
+--------------------------------------------------
+TAG: p | CLASS: ['framer-text'] | DATA-FRAMER: None
+TEXT: Tech Talks | Ft. Ar. Sunayana Subbiah
+PARENT: div | PARENT CLASS: ['framer-1ulydqv']
+PARENT SIBLINGS: ['div']
+--------------------------------------------------
+TAG: div | CLASS: ['framer-1t81zrn'] | DATA-FRAMER: Row
+TEXT: Subbiah Sivasubramaniam Founder & Principal Read more Sunayana Subbiah Founder & Principal Read more
+PARENT: div | PARENT CLASS: ['framer-1m19005']
+PARENT SIBLINGS: []
+--------------------------------------------------
+TAG: div | CLASS: ['framer-he11q9'] | DATA-FRAMER: Subbiah
+TEXT: Subbiah Sivasubramaniam Founder & Principal Read more
+PARENT: div | PARENT CLASS: ['framer-1t81zrn']
+PARENT SIBLINGS: []
+--------------------------------------------------
+TAG: div | CLASS: ['framer-19h6t4f'] | DATA-FRAMER: Caption
+TEXT: Subbiah Sivasubramaniam Founder & Principal Read more
+PARENT: div | PARENT CLASS: ['framer-he11q9']
+PARENT SIBLINGS: ['div']
+--------------------------------------------------
+TAG: div | CLASS: ['framer-sk2rs5'] | DATA-FRAMER: Name
+TEXT: Subbiah Sivasubramaniam
+PARENT: div | PARENT CLASS: ['framer-19h6t4f']
+PARENT SIBLINGS: []
+--------------------------------------------------
+TAG: h3 | CLASS: ['framer-text'] | DATA-FRAMER: None
+TEXT: Subbiah Sivasubramaniam
+PARENT: div | PARENT CLASS: ['framer-sk2rs5']
+PARENT SIBLINGS: ['div', 'a']
+--------------------------------------------------
+TAG: div | CLASS: ['framer-rfb7vh'] | DATA-FRAMER: Sunayana
+TEXT: Sunayana Subbiah Founder & Principal Read more
+PARENT: div | PARENT CLASS: ['framer-1t81zrn']
+PARENT SIBLINGS: []
+--------------------------------------------------
+TAG: div | CLASS: ['framer-1wg7jrh'] | DATA-FRAMER: Caption
+TEXT: Sunayana Subbiah Founder & Principal Read more
+PARENT: div | PARENT CLASS: ['framer-rfb7vh']
+PARENT SIBLINGS: []
+--------------------------------------------------
+TAG: div | CLASS: ['framer-j1ujvj'] | DATA-FRAMER: Name
+TEXT: Sunayana Subbiah
+PARENT: div | PARENT CLASS: ['framer-1wg7jrh']
+PARENT SIBLINGS: []
+--------------------------------------------------
+TAG: h3 | CLASS: ['framer-text'] | DATA-FRAMER: None
+TEXT: Sunayana Subbiah
+PARENT: div | PARENT CLASS: ['framer-j1ujvj']
+PARENT SIBLINGS: ['div', 'a']
+--------------------------------------------------
