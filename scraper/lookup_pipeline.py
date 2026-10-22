@@ -51,7 +51,7 @@ from scraper.rate_limiter import (
     check_and_increment_places_quota,
     execute_deduplicated_lookup,
 )
-from scraper.verify import is_leader_role, normalise_text, verify_in_text, verify_llm_extraction
+from scraper.verify import is_leader_role, normalise_text, verify_in_text, verify_llm_extraction, verify_social_url
 
 logger = logging.getLogger(__name__)
 
@@ -203,6 +203,11 @@ def _confirm_site_match(
     domain = urlparse(website).netloc.lower().replace("www.", "")
     domain_slug = re.sub(r"[^a-z0-9]", "", domain.split(".")[0])
 
+    # Reject known directory/aggregator domains immediately
+    for agg in ("wallstowonder", "nobroker", "justdial", "sulekha", "indiamart", "magicbricks", "housing", "99acres", "houzz"):
+        if agg in domain:
+            return False, f"rejected_aggregator_domain_{agg}"
+
     # Significant words from business name
     name_words = [
         w.lower()
@@ -266,7 +271,7 @@ def _extract_emails_from_code(html: str, markdown: str) -> list[str]:
     return sorted(list(found))
 
 
-def _extract_socials_from_links(links: list[str]) -> dict[str, str]:
+def _extract_socials_from_links(links: list[str], business_name: str = "") -> dict[str, str]:
     socials: dict[str, str] = {}
     for link in links:
         if not isinstance(link, str) or not link.startswith("http"):
@@ -277,10 +282,9 @@ def _extract_socials_from_links(links: list[str]) -> dict[str, str]:
             continue
         for platform_domain, platform_name in _SOCIAL_DOMAINS.items():
             if platform_domain in domain and platform_name not in socials:
-                # Discard generic platform homepages
-                path = urlparse(link).path.strip("/")
-                if len(path) >= 2 and not path.lower().startswith(("home", "share", "intent", "login", "signup")):
-                    socials[platform_name] = link
+                v_link = verify_social_url(platform_name, link, business_name=business_name)
+                if v_link:
+                    socials[platform_name] = v_link
     return socials
 
 
@@ -528,7 +532,7 @@ async def _lookup_company_impl(
         if code_emails:
             result["email"] = {"value": code_emails[0], "source": website_url}
 
-        socials = _extract_socials_from_links(all_links)
+        socials = _extract_socials_from_links(all_links, business_name=name)
         if socials:
             result["socials"] = {k: {"value": v, "source": website_url} for k, v in socials.items()}
 
@@ -607,6 +611,11 @@ async def _lookup_company_impl(
             # Company size
             if not verified_size and verified_data.get("company_size"):
                 verified_size = verified_data["company_size"]
+
+            # Socials from OpenRouter (verified against aggregator handles)
+            for plat, s_obj in verified_data.get("socials", {}).items():
+                if plat not in result["socials"] and s_obj.get("value"):
+                    result["socials"][plat] = s_obj
 
         # Pick CEO: person whose title contains CEO, Chief Executive, Founder, or Managing Director
         ceo_person = None

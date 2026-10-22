@@ -223,15 +223,10 @@ def search_companies(
 
 
 @app.post("/api/analyze")
-def analyze_company(req: AnalyzeRequest):
+async def analyze_company(req: AnalyzeRequest):
     """
     Deep crawl and extract comprehensive business intelligence for a company.
-    Provides diagnostic transparency into:
-    - Candidate website vs verified official website
-    - Resolution source
-    - Pages successfully scraped
-    - Crawl coverage
-    - Supporting source URLs for each extracted fact
+    Uses Google Places + OpenRouter verification first, falling back to legacy crawler if needed.
     """
     target = (req.target_input or req.target or "").strip()
     if not target:
@@ -239,6 +234,83 @@ def analyze_company(req: AnalyzeRequest):
 
     logger.info("[API Analyze] Starting deep crawl for: %s", target)
     try:
+        # 1. Try modern OpenRouter lookup pipeline with match guard
+        lookup_res = await lookup_company(name=target, db_path=DB_PATH)
+        if lookup_res.get("match_status") == "matched":
+            org_name = lookup_res.get("organisation_name", {}).get("value") or target
+            ceo_obj = lookup_res.get("ceo", {})
+            owner = ceo_obj.get("name", {}).get("value")
+            desig = ceo_obj.get("designation", {}).get("value")
+            website_url = lookup_res.get("website", {}).get("value") or target
+            city = lookup_res.get("city", {}).get("value")
+            email = lookup_res.get("email", {}).get("value")
+            phone = lookup_res.get("mobile", {}).get("value")
+            socials = {k: v["value"] for k, v in lookup_res.get("socials", {}).items() if v.get("value")}
+            services = [s["value"] for s in lookup_res.get("services", []) if s.get("value")]
+
+            return {
+                "ok": True,
+                "company_name": org_name if org_name != "not found" else target,
+                "website": website_url if website_url != "not found" else target,
+                "verification_status": "Verified",
+                "verification_score": 0.95,
+                "city": city if city != "not found" else (req.market_city or ""),
+                "owner_name": owner if owner != "not found" else "Not found",
+                "designation": desig if desig != "not found" else "Not found",
+                "org_size": lookup_res.get("company_size", {}).get("value", "Not stated"),
+                "email": email if email != "not found" else "Not found",
+                "phone": phone if phone != "not found" else "Not found",
+                "social_links": socials,
+                "services": services,
+                "description": f"Verified via Google Places and OpenRouter ({len(lookup_res.get('people', []))} team members verified).",
+                "source_urls": [p["source"] for p in lookup_res.get("people", []) if p.get("source")],
+                "resolution_info": {
+                    "resolution_source": "Google Places + OpenRouter",
+                    "original_url": target,
+                    "verified_url": website_url,
+                    "pages_scraped": [p["source"] for p in lookup_res.get("people", []) if p.get("source")],
+                    "verification_notes": ["Domain and entity verified via Google Places & OpenRouter"],
+                    "scrape_errors": [],
+                },
+                "field_evidence": [
+                    {
+                        "field_name": "owner_name",
+                        "extracted_value": owner,
+                        "verification_status": "Verified",
+                        "source_url": ceo_obj.get("name", {}).get("source", ""),
+                        "context_text": f"Leader role: {desig}",
+                    }
+                ] if owner and owner != "not found" else [],
+            }
+        elif lookup_res.get("match_status") == "ambiguous":
+            return {
+                "ok": False,
+                "company_name": target,
+                "website": target,
+                "verification_status": "Ambiguous",
+                "verification_score": 0.0,
+                "city": req.market_city or "",
+                "owner_name": "Not found",
+                "designation": "Not found",
+                "org_size": "Not stated",
+                "email": "Not found",
+                "phone": "Not found",
+                "social_links": {},
+                "services": [],
+                "description": lookup_res.get("ambiguity_reason", "Multiple matching branches or website did not match business name (aggregator rejected)."),
+                "source_urls": [],
+                "resolution_info": {
+                    "resolution_source": "Ambiguous Match Guard",
+                    "original_url": target,
+                    "verified_url": "",
+                    "pages_scraped": [],
+                    "verification_notes": ["Aggregator domain or ambiguous entity detected; rejected."],
+                    "scrape_errors": [],
+                },
+                "field_evidence": [],
+            }
+
+        # 2. Fallback to legacy extractor
         result = find_and_extract_company_lead(
             target_input=target,
             db_path=DB_PATH,

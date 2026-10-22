@@ -37,9 +37,18 @@ SYSTEM_PROMPT = (
     '  "services": ["string"],\n'
     '  "locations": ["string"],\n'
     '  "company_size": "string or null",\n'
-    '  "founded": "string or integer or null"\n'
+    '  "founded": "string or integer or null",\n'
+    '  "socials": {\n'
+    '    "linkedin": "url or null",\n'
+    '    "instagram": "url or null",\n'
+    '    "facebook": "url or null",\n'
+    '    "x": "url or null",\n'
+    '    "youtube": "url or null"\n'
+    '  }\n'
     "}\n"
     "Rules:\n"
+    "- For people: Extract all named individuals with their designations (e.g. Founder, CEO, Director, Principal Architect, Partner).\n"
+    "- For socials: ONLY extract the official profile links or handles that explicitly belong to this specific company. Do NOT extract social links of directories, aggregators, website templates/creators, share widgets, or hosting platforms (e.g. do not include links for NoBroker, WallsToWonder, JustDial, Wix, WordPress, Houzz).\n"
     "- Use null or [] for anything not explicitly stated in the supplied text.\n"
     "- Never invent, infer, or extrapolate.\n"
     "- Do not include markdown formatting or commentary outside the JSON object."
@@ -83,6 +92,7 @@ def _parse_and_validate_json(raw_response: str) -> dict[str, Any]:
         "locations": [],
         "company_size": None,
         "founded": None,
+        "socials": {},
     }
 
     if not raw_response or not raw_response.strip():
@@ -115,6 +125,7 @@ def _parse_and_validate_json(raw_response: str) -> dict[str, Any]:
         "locations": [],
         "company_size": None,
         "founded": None,
+        "socials": {},
     }
 
     # Validate people
@@ -150,6 +161,14 @@ def _parse_and_validate_json(raw_response: str) -> dict[str, Any]:
     raw_founded = data.get("founded")
     if raw_founded is not None and str(raw_founded).strip().lower() not in ("null", "none", ""):
         result["founded"] = str(raw_founded).strip()
+
+    # Validate socials
+    raw_socials = data.get("socials")
+    if isinstance(raw_socials, dict):
+        for plat in ("linkedin", "instagram", "facebook", "x", "youtube"):
+            s_val = raw_socials.get(plat)
+            if s_val and isinstance(s_val, str) and s_val.strip().lower() not in ("null", "none", ""):
+                result["socials"][plat] = s_val.strip()
 
     return result
 

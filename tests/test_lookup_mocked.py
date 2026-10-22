@@ -69,6 +69,15 @@ class TestMockedLookupPipeline(unittest.TestCase):
         self.assertFalse(is_leader_role("Junior Draftsman"))
         self.assertFalse(is_leader_role("Marketing Coordinator"))
 
+    def test_aggregator_social_dropped(self):
+        from scraper.verify import verify_social_url
+        # Aggregator handles like wallstowonder, nobroker, etc. must be rejected
+        self.assertIsNone(verify_social_url("instagram", "https://instagram.com/wallstowonder", business_name="Anand Nivash"))
+        self.assertIsNone(verify_social_url("facebook", "https://facebook.com/nobroker", business_name="Studio Design"))
+        # Legitimate company handle must be kept
+        legit = verify_social_url("instagram", "https://instagram.com/anandnivash_designs", business_name="Anand Nivash")
+        self.assertEqual(legit, "https://instagram.com/anandnivash_designs")
+
 
 if __name__ == "__main__":
     unittest.main()

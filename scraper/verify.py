@@ -201,4 +201,74 @@ def verify_llm_extraction(
             "reason": "Not found verbatim in page text",
         })
 
+    # 6. Verify Socials
+    verified["socials"] = {}
+    raw_socials = llm_data.get("socials", {})
+    if isinstance(raw_socials, dict):
+        for plat, s_url in raw_socials.items():
+            if s_url and isinstance(s_url, str):
+                v_url = verify_social_url(plat, s_url, page_text=page_text, source_url=source_url)
+                if v_url:
+                    verified["socials"][plat] = {"value": v_url, "source": source_url}
+                else:
+                    logger.info("[Verification] Dropped social '%s' (%s): failed verification / aggregator match", plat, s_url)
+                    verified["dropped_items"].append({
+                        "field": f"socials.{plat}",
+                        "value": s_url,
+                        "reason": "Aggregator match or failed social url verification",
+                    })
+
     return verified
+
+
+KNOWN_AGGREGATOR_PATTERNS = [
+    "wallstowonder", "nobroker", "justdial", "sulekha", "indiamart",
+    "magicbricks", "housing", "99acres", "houzz", "architecturaldigest",
+    "quikr", "olx", "yellowpages", "wix", "wordpress", "squarespace",
+    "godaddy", "weebly", "shopify",
+]
+
+
+def verify_social_url(
+    platform: str,
+    raw_url: str,
+    business_name: str = "",
+    page_text: str = "",
+    source_url: str = "",
+) -> Optional[str]:
+    """
+    Verify that raw_url is a legitimate social profile link for the company,
+    not an aggregator platform link or generic template/share link.
+    """
+    if not raw_url or not isinstance(raw_url, str):
+        return None
+    raw_url = raw_url.strip()
+    if not raw_url.startswith("http"):
+        return None
+
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(raw_url)
+        path = parsed.path.strip("/")
+        netloc = parsed.netloc.lower()
+    except Exception:
+        return None
+
+    # Must have a profile handle/path
+    if not path or len(path) < 2:
+        return None
+
+    path_lower = path.lower()
+    # Reject generic platform routes
+    if path_lower.startswith(("home", "share", "intent", "login", "signup", "sharer", "search", "p/", "explore")):
+        return None
+
+    # Reject handles matching known aggregator terms
+    for term in KNOWN_AGGREGATOR_PATTERNS:
+        if term in path_lower:
+            norm_name = normalise_text(business_name) if business_name else ""
+            if term not in norm_name:
+                logger.info("[Verification] Dropped social %s (%s): matches aggregator handle '%s'", platform, raw_url, term)
+                return None
+
+    return raw_url
