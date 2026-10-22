@@ -200,7 +200,7 @@ def _filter_relevant_pages(candidate_urls: list[str], homepage: str) -> list[str
                 selected.append(url)
                 break
 
-        if len(selected) >= 2:
+        if len(selected) >= 4:
             break
 
     return selected
@@ -321,6 +321,31 @@ def _extract_socials(links: list[str]) -> dict[str, str]:
     return socials
 
 
+def _clean_ceo_name(name_str: str) -> Optional[str]:
+    """Validate and clean an extracted individual person name."""
+    if not name_str:
+        return None
+    s = re.sub(r"^(?:Ar\.?|Architect|Mr\.?|Ms\.?|Mrs\.?|Dr\.?)\s+", "", name_str.strip(), flags=re.IGNORECASE).strip()
+    s = s.rstrip(" .,-")
+    s = re.sub(r"\s+", " ", s)
+    if len(s) < 3 or len(s) > 40:
+        return None
+    words = s.split()
+    if len(words) < 2 or len(words) > 5:
+        return None
+    if not all(re.match(r"^[A-Za-z'-]+(?:\.)?$", w) for w in words):
+        return None
+    for w in words:
+        if len(w) == 1 and not w.endswith("."):
+            return None
+    if not all(w[0].isupper() for w in words if w):
+        return None
+    junk_words = {"india", "design", "studio", "architect", "architecture", "interior", "firm", "company", "private", "limited"}
+    if any(w.lower().rstrip(".-") in junk_words for w in words):
+        return None
+    return s.title()
+
+
 def _extract_ceo(text: str) -> tuple[str, str]:
     """
     Extract CEO name and exact designation from about/team page text.
@@ -332,92 +357,101 @@ def _extract_ceo(text: str) -> tuple[str, str]:
 
     TITLE_ALT = (
         r"CEO|Chief Executive Officer|Founder|Co-Founder|Managing Director|MD|"
-        r"Director|Principal|Partner|President|Head|Architect|Business Coach|"
-        r"Creative Director|Design Director|Studio Head|Lead Architect|Principal Architect|"
+        r"Director|Principal Architect|Principal|Partner|President|Head|Architect|Business Coach|"
+        r"Creative Director|Design Director|Studio Head|Lead Architect|"
         r"Creative Lead|Studio Director|Brand Strategist"
     )
 
-    # Pattern A: Title followed by colon/dash and then Name
-    pat_a = re.search(
-        rf"(?P<title>{TITLE_ALT})\s*[:\-\u2013\u2014]\s*"
-        r"(?:(?:Ar\.?|Mr\.?|Ms\.?|Mrs\.?|Dr\.?)\s+)?"
-        r"(?P<name>[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})",
-        text,
-        re.IGNORECASE,
-    )
-    if pat_a:
-        name = pat_a.group("name").strip()
-        title = pat_a.group("title").strip()
-        return name, title
-
-    # Pattern B: Name followed by comma/dash/newline and then Title
-    pat_b = re.search(
-        r"(?P<name>[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})"
-        r"\s*[,\-\u2013\u2014\n]\s*"
-        rf"(?P<title>{TITLE_ALT})\b",
-        text,
-        re.IGNORECASE,
-    )
-    if pat_b:
-        name = pat_b.group("name").strip()
-        title = pat_b.group("title").strip()
-        return name, title
-
-    # Pattern C: founded/led by Name
-    pat_c = re.search(
-        r"(?:founded|co-founded|led|headed|established|started|spearheaded)\s+(?:in\s+\d{4}\s+)?by\s+"
-        r"(?:(?:Ar\.?|Mr\.?|Ms\.?|Mrs\.?|Dr\.?)\s+)?"
-        r"(?P<name>[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})",
-        text,
-        re.IGNORECASE,
-    )
-    if pat_c:
-        name = pat_c.group("name").strip()
-        return name, "Founder"
-
-    # Pattern D: first-person "I'm Name" / "I am Name" on an about/bio page
+    # 1. First-person "I'm Name" / "I am Name" / "My name is Name"
     pat_d = re.search(
         r"(?:I'?m|I am|My name is)\s+"
-        r"(?:(?:Ar\.?|Mr\.?|Ms\.?|Mrs\.?|Dr\.?)\s+)?"
-        r"(?P<name>[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3})"
-        r"(?:\s*,\s*(?P<title>[A-Za-z &'-]+?))?"
-        r"(?:\.|,|\n|$)",
+        r"(?:(?:Ar\.?|Architect|Mr\.?|Ms\.?|Mrs\.?|Dr\.?)\s+)?"
+        r"([A-Z][a-zA-Z.'-]*(?:\s+[A-Z][a-zA-Z.'-]*){1,3})"
+        r"(?:\s*,\s*([^.\n\r]+?))?"
+        r"(?:\.|\n|$)",
         text,
-        re.IGNORECASE,
     )
     if pat_d:
-        name = pat_d.group("name").strip()
-        raw_title = (pat_d.group("title") or "").strip()
-        # Only accept if name looks like a real person name (>= 2 words OR single word >= 4 chars)
-        words = name.split()
-        if (len(words) >= 2 or (len(words) == 1 and len(name) >= 4)) and len(name) <= 40:
-            # Clean out any trailing company/junk words
-            if not any(junk in name.lower() for junk in ["india", "design", "studio", "architect", "interior", "firm"]):
-                title = raw_title if raw_title and len(raw_title) < 60 else "Principal"
-                return name, title
+        c = _clean_ceo_name(pat_d.group(1))
+        if c:
+            raw_desig = (pat_d.group(2) or "").strip()
+            m_t = re.search(rf"\b({TITLE_ALT})\b", raw_desig, re.IGNORECASE)
+            desig = m_t.group(1).title() if m_t else ("Founder & Principal" if not raw_desig else raw_desig[:40].title())
+            return c, desig
 
-    # Pattern E: "Name is the Founder/CEO" or "Name serves as"
+    # 2. Name is the Founder / CEO
     pat_e = re.search(
-        r"(?P<name>[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})"
-        r"\s+(?:is|serves as|works as)\s+(?:the\s+|an?\s+)?"
-        rf"(?P<title>{TITLE_ALT})\b",
+        r"([A-Z][a-zA-Z.'-]*(?:\s+[A-Z][a-zA-Z.'-]*){1,3})\s+"
+        r"(?:is|serves as|works as)\s+(?:the\s+|an?\s+)?"
+        rf"({TITLE_ALT})\b",
         text,
         re.IGNORECASE,
     )
     if pat_e:
-        name = pat_e.group("name").strip()
-        title = pat_e.group("title").strip()
-        return name, title
+        c = _clean_ceo_name(pat_e.group(1))
+        if c:
+            return c, pat_e.group(2).strip().title()
 
-    # Pattern F: JSON-LD / schema.org Person name in text like ""name":"Shanker De""
+    # 3. Founded / established by Name
+    pat1 = re.search(
+        r"(?i:founded|co-founded|established|started|headed|led|spearheaded)\s+"
+        r"(?:(?i:in)\s+\d{4}\s+)?(?i:by\s+)"
+        r"(?:(?:Ar\.?|Architect|Mr\.?|Ms\.?|Mrs\.?|Dr\.?)\s+)?"
+        r"([A-Z][a-zA-Z.'-]*(?:\s+[A-Z][a-zA-Z.'-]*){1,3})"
+        r"(?:\s+(?i:in)\s+\d{4})?",
+        text,
+    )
+    if pat1:
+        c = _clean_ceo_name(pat1.group(1))
+        if c:
+            return c, "Founder"
+
+    # 4. Title: Name
+    pat2 = re.search(
+        rf"\b({TITLE_ALT})\s*[:\-\u2013\u2014]\s*"
+        r"(?:(?:Ar\.?|Architect|Mr\.?|Ms\.?|Mrs\.?|Dr\.?)\s+)?"
+        r"([A-Z][a-zA-Z.'-]*(?:\s+[A-Z][a-zA-Z.'-]*){1,3})",
+        text,
+        re.IGNORECASE,
+    )
+    if pat2:
+        c = _clean_ceo_name(pat2.group(2))
+        if c:
+            return c, pat2.group(1).strip().title()
+
+    # 5. Name, Title or Name - Title
+    pat3 = re.search(
+        r"(?:(?:Ar\.?|Architect)\s+)?([A-Z][a-zA-Z.'-]*(?:\s+[A-Z][a-zA-Z.'-]*){1,3})\s*"
+        rf"(?:,\s*|\s+[\-\u2013\u2014]\s+|\n+)\s*({TITLE_ALT})\b",
+        text,
+        re.IGNORECASE,
+    )
+    if pat3:
+        c = _clean_ceo_name(pat3.group(1))
+        if c:
+            return c, pat3.group(2).strip().title()
+
+    # 6. Heading: # Name \n Title
+    pat5 = re.search(
+        r"(?:^|\n)#{1,4}\s+(?:(?:Ar\.?|Architect)\s+)?([A-Z][a-zA-Z.'-]*(?:\s+[A-Z][a-zA-Z.'-]*){1,3})\s*\n+\s*"
+        rf"({TITLE_ALT})\b",
+        text,
+        re.IGNORECASE,
+    )
+    if pat5:
+        c = _clean_ceo_name(pat5.group(1))
+        if c:
+            return c, pat5.group(2).strip().title()
+
+    # 7. JSON-LD / schema.org Person name
     pat_f = re.search(
-        r'"name"\s*:\s*"(?P<name>[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})"',
+        r'"name"\s*:\s*"([A-Z][a-zA-Z.\'-]+(?:\s+[A-Z][a-zA-Z.\'-]+){1,3})"',
         text,
     )
     if pat_f:
-        name = pat_f.group("name").strip()
-        if len(name.split()) >= 2:
-            return name, "Principal"
+        c = _clean_ceo_name(pat_f.group(1))
+        if c:
+            return c, "Principal"
 
     return "not found", "not found"
 
@@ -621,8 +655,9 @@ def lookup_company(name: str, db_path=None) -> dict:
         if any(kw in urlparse(url).path.lower() for kw in ("about", "team", "people", "leadership", "who-we-are", "our-story", "us"))
     ]
     fallback_pages = list(scraped_pages.keys())  # includes homepage
+    search_pages = about_pages + [p for p in fallback_pages if p not in about_pages]
 
-    for page_url in (about_pages or fallback_pages):
+    for page_url in search_pages:
         page_data = scraped_pages.get(page_url)
         if not page_data:
             continue

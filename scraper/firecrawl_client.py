@@ -276,20 +276,21 @@ def _clean_single_name(name_str: str) -> Optional[str]:
     if not name_str:
         return None
     s = re.sub(r"^(?:Ar\.?|Architect|Mr\.?|Ms\.?|Mrs\.?|Dr\.?)\s+", "", name_str.strip(), flags=re.I).strip()
+    s = s.rstrip(" .,-")
     s = re.sub(r"\s+", " ", s)
     if len(s) < 3 or len(s) > 40:
         return None
     words = s.split()
     if len(words) < 2 or len(words) > 5:
         return None
-    if not all(re.match(r"^[A-Za-z'.-]+$", w) for w in words):
+    if not all(re.match(r"^[A-Za-z'-]+(?:\.)?$", w) for w in words):
         return None
     tokens = {w.lower().rstrip(".-") for w in words}
     if tokens & _INVALID_PERSON_WORDS:
         return None
-    # Reject names containing single/two-letter words that aren't recognized initials
+    # Reject names containing single-letter words that aren't recognized initials
     for w in words:
-        if len(w) <= 2 and not w.endswith("."):
+        if len(w) == 1 and not w.endswith("."):
             return None
     # Each word must start with an uppercase letter
     if not all(w[0].isupper() for w in words if w):
@@ -405,17 +406,47 @@ def extract_owner_and_designation(text: str) -> tuple[str, str]:
         r"President|Business Coach|Creative Lead|Studio Director|Brand Strategist|Head"
     )
 
-    # Pattern 1: Founded/established by Name [& Name]
+    # 1. First-person "I'm Name" / "I am Name" / "My name is Name" bio pattern
     pat1 = re.search(
-        r'(?:founded|co-founded|established|started|headed|led|spearheaded)\s+'
-        r'(?:in\s+\d{4}\s+)?(?:by\s+)'
-        r'(?:(?:Ar\.?|Architect|Mr\.?|Ms\.?|Mrs\.?|Dr\.?)\s+)?'
-        r'([A-Za-z\s,&.-]+?)(?:,\s*[A-Z]|\.\s*|\n|$)',
+        r"(?:I'?m|I am|My name is)\s+"
+        r"(?:(?:Ar\.?|Architect|Mr\.?|Ms\.?|Mrs\.?|Dr\.?)\s+)?"
+        r"([A-Z][a-zA-Z.'-]*(?:\s+[A-Z][a-zA-Z.'-]*){1,3})"
+        r"(?:\s*,\s*([^.\n\r]+?))?"
+        r"(?:\.|\n|$)",
+        text,
+    )
+    if pat1:
+        clean = _clean_single_name(pat1.group(1))
+        if clean:
+            raw_desig = (pat1.group(2) or "").strip()
+            m_t = re.search(rf"\b({TITLE_ALT})\b", raw_desig, re.I)
+            desig = m_t.group(1).title() if m_t else ("Founder & Principal" if not raw_desig else raw_desig[:40].title())
+            return clean, desig
+
+    # 2. "Name is/serves as the CEO/Founder"
+    pat2 = re.search(
+        r"([A-Z][a-zA-Z.'-]*(?:\s+[A-Z][a-zA-Z.'-]*){1,3})\s+"
+        r"(?:is|serves as|works as)\s+(?:the\s+|an?\s+)?"
+        rf"({TITLE_ALT})\b",
         text,
         re.I,
     )
-    if pat1:
-        raw_names = pat1.group(1).strip()
+    if pat2:
+        clean = _clean_single_name(pat2.group(1))
+        if clean:
+            return clean, pat2.group(2).strip().title()
+
+    # 3. Founded/established by Name [& Name]
+    pat3 = re.search(
+        r"(?i:founded|co-founded|established|started|headed|led|spearheaded)\s+"
+        r"(?:(?i:in)\s+\d{4}\s+)?(?i:by\s+)"
+        r"(?:(?:Ar\.?|Architect|Mr\.?|Ms\.?|Mrs\.?|Dr\.?)\s+)?"
+        r"([A-Z][a-zA-Z.'-]*(?:\s+[A-Z][a-zA-Z.'-]*){0,4}(?:\s*(?:&|and|,)\s*[A-Z][a-zA-Z.'-]*(?:\s+[A-Z][a-zA-Z.'-]*){0,4})*)"
+        r"(?:\s+(?i:in)\s+\d{4})?",
+        text,
+    )
+    if pat3:
+        raw_names = pat3.group(1).strip()
         valid_names = _validate_names(raw_names)
         if valid_names:
             desig = (
@@ -425,95 +456,53 @@ def extract_owner_and_designation(text: str) -> tuple[str, str]:
             )
             return valid_names, desig
 
-    # Pattern 2: Designation: Name
-    pat2 = re.search(
-        rf'\b({TITLE_ALT})\s*[:\-\u2013\u2014]\s*'
-        r'(?:(?:Ar\.?|Architect|Mr\.?|Ms\.?|Mrs\.?|Dr\.?)\s+)?'
-        r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})',
-        text,
-        re.I,
-    )
-    if pat2:
-        desig = pat2.group(1).strip()
-        raw_name = pat2.group(2).strip()
-        clean = _clean_single_name(raw_name)
-        if clean:
-            return clean, desig.title()
-
-    # Pattern 3: Name, Designation or Name — Designation
-    pat3 = re.search(
-        r'(?:(?:Ar\.?|Architect)\s+)?([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\s*(?:,\s*|\s+[\-\u2013\u2014]\s+|\n)'
-        rf'(?:is\s+(?:the\s+))?({TITLE_ALT})',
-        text,
-        re.I,
-    )
-    if pat3:
-        raw_name = pat3.group(1).strip()
-        desig = pat3.group(2).strip()
-        clean = _clean_single_name(raw_name)
-        if clean:
-            return clean, desig.title()
-
-    # Pattern 4: Ar. Name or Architect Name
+    # 4. Designation: Name
     pat4 = re.search(
-        r'\b(?:Ar\.|Architect)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\b',
+        rf"\b({TITLE_ALT})\s*[:\-\u2013\u2014]\s*"
+        r"(?:(?:Ar\.?|Architect|Mr\.?|Ms\.?|Mrs\.?|Dr\.?)\s+)?"
+        r"([A-Z][a-zA-Z.'-]*(?:\s+[A-Z][a-zA-Z.'-]*){1,3})",
         text,
+        re.I,
     )
     if pat4:
-        raw_name = pat4.group(1).strip()
-        clean = _clean_single_name(raw_name)
+        desig = pat4.group(1).strip()
+        clean = _clean_single_name(pat4.group(2))
         if clean:
-            return clean, "Principal Architect"
+            return clean, desig.title()
 
-    # Pattern 5: Markdown heading with name followed by designation
+    # 5. Name, Designation or Name — Designation
     pat5 = re.search(
-        r'(?:^|\n)#{1,4}\s+(?:(?:Ar\.?|Architect)\s+)?([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\s*\n+\s*'
-        rf'({TITLE_ALT})',
+        r"(?:(?:Ar\.?|Architect)\s+)?([A-Z][a-zA-Z.'-]*(?:\s+[A-Z][a-zA-Z.'-]*){1,3})\s*"
+        rf"(?:,\s*|\s+[\-\u2013\u2014]\s+|\n+)\s*({TITLE_ALT})\b",
         text,
         re.I,
     )
     if pat5:
-        raw_name = pat5.group(1).strip()
-        desig = pat5.group(2).strip()
-        clean = _clean_single_name(raw_name)
+        clean = _clean_single_name(pat5.group(1))
         if clean:
-            return clean, desig.title()
+            return clean, pat5.group(2).strip().title()
 
-    # Pattern 6: first-person "I'm Name" / "I am Name" bio pattern
+    # 6. Markdown heading with name followed by designation
     pat6 = re.search(
-        r"(?:I'?m|I am|My name is)\s+"
-        r'(?:(?:Ar\.?|Mr\.?|Ms\.?|Mrs\.?|Dr\.?)\s+)?'
-        r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3})'
-        r'(?:\s*,\s*([A-Za-z &\'-]+?))?'
-        r'(?:\.|,|\n|$)',
+        r"(?:^|\n)#{1,4}\s+(?:(?:Ar\.?|Architect)\s+)?([A-Z][a-zA-Z.'-]*(?:\s+[A-Z][a-zA-Z.'-]*){1,3})\s*\n+\s*"
+        rf"({TITLE_ALT})\b",
         text,
         re.I,
     )
     if pat6:
-        raw_name = pat6.group(1).strip()
-        raw_title = (pat6.group(2) or "").strip()
-        words = raw_name.split()
-        if (len(words) >= 2 or (len(words) == 1 and len(raw_name) >= 4)) and len(raw_name) <= 40:
-            if not any(junk in raw_name.lower() for junk in ["india", "design", "studio", "architect", "interior", "firm"]):
-                clean = _clean_single_name(raw_name)
-                if clean:
-                    title = raw_title if raw_title and len(raw_title) < 60 else "Principal"
-                    return clean, title
+        clean = _clean_single_name(pat6.group(1))
+        if clean:
+            return clean, pat6.group(2).strip().title()
 
-    # Pattern 7: "Name is/serves as the CEO/Founder"
+    # 7. Ar. Name or Architect Name
     pat7 = re.search(
-        r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})'
-        r'\s+(?:is|serves as|works as)\s+(?:the\s+|an?\s+)?'
-        rf'({TITLE_ALT})\b',
+        r"\b(?:Ar\.|Architect)\s+([A-Z][a-zA-Z.'-]*(?:\s+[A-Z][a-zA-Z.'-]*){1,3})\b",
         text,
-        re.I,
     )
     if pat7:
-        raw_name = pat7.group(1).strip()
-        desig = pat7.group(2).strip()
-        clean = _clean_single_name(raw_name)
+        clean = _clean_single_name(pat7.group(1))
         if clean:
-            return clean, desig.title()
+            return clean, "Principal Architect"
 
     return "Not found", "Not found"
 
